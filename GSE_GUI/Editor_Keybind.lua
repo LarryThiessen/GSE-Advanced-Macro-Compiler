@@ -1825,11 +1825,8 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
     specialization = tostring(specialization or defaultSpecIndex())
 
     local rows = {}
-    local saveButton, rowContainer, inheritedContainer, redraw
+    local rowContainer, inheritedContainer, redraw
     local showState
-    -- A row removed here came off the bar at once and has not been saved: left
-    -- that way, the pane puts the bar back as saved when it closes.
-    local releasedUnsaved = false
     -- One per shown row (activeKeyRefreshers).
     local keyRefreshers = {}
     activeKeyRefreshers = keyRefreshers
@@ -1982,8 +1979,19 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         end
     end
 
+    -- Every change applies on the spot: the rows are written and the bar
+    -- re-armed on the next frame, so a change and the redraw it brings apply
+    -- once.  In combat the write waits for PLAYER_REGEN_ENABLED (an override
+    -- is a secure attribute), and keeps waiting if the pane closes first.
+    local apply
+    local applyQueued, applyPending, combatWatcher = false, false, nil
     local function markDirty()
-        if saveButton then saveButton:SetDisabled(false) end
+        if applyQueued then return end
+        applyQueued = true
+        C_Timer.After(0, function()
+            applyQueued = false
+            apply()
+        end)
     end
 
     local function sequenceList()
@@ -2009,38 +2017,42 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         return r.bind
     end
 
-    local function save()
+    apply = function()
         if InCombatLockdown() then
-            GSE.Print(L["Button Bindings"] .. ": " .. (ERR_NOT_IN_COMBAT or "not in combat"))
+            if not applyPending then
+                applyPending = true
+                GSE.Print(L["Applied when combat ends."], L["Button Bindings"])
+                combatWatcher = combatWatcher or CreateFrame("Frame")
+                combatWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+                combatWatcher:SetScript("OnEvent", function(self)
+                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                    applyPending = false
+                    apply()
+                end)
+            end
             return
         end
-        local seen = {}
-        for _, r in ipairs(rows) do
-            local key = rowKey(r)
-            if key then
-                if seen[key] then
-                    GSE.Print(string.format(L["%s is overridden more than once.  Change or remove one before saving."], key))
-                    return
-                end
-                seen[key] = true
-            end
-        end
-
+        applyPending = false
         local scope = overrideScope(specialization, loadout, true)
         for k, v in pairs(scope) do
             if type(v) == "table" then scope[k] = nil end
         end
-        -- A row with a button and no sequence, or a sequence and no button,
-        -- is still being filled in: kept on screen and said, below.
-        local incomplete = {}
+        -- One row per button and state: a second row for the same is left
+        -- out and said.  A row with a button and no sequence, or the reverse,
+        -- is still being filled in: left on screen, applied once it is whole.
+        local seen = {}
         for _, r in ipairs(rows) do
             local key = rowKey(r)
-            if key and not GSE.isEmpty(r.seq) then
+            if key and seen[key] then
+                GSE.Print(string.format(L["%s is overridden more than once.  The second row is not applied."], key),
+                    L["Button Bindings"])
+            elseif key and not GSE.isEmpty(r.seq) then
+                seen[key] = true
                 local state = r.state
                 if state == "Default" or state == stateDefaultFor(r.bind) then state = nil end
                 scope[key] = {Bind = r.bind, State = state, Sequence = r.seq}
-            elseif key or not GSE.isEmpty(r.seq) then
-                incomplete[#incomplete + 1] = r
+            elseif key then
+                seen[key] = true
             end
         end
         if loadout and not next(scope) then
@@ -2052,23 +2064,10 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         ownOverrideReload = true
         GSE.ReloadOverrides()
         ownOverrideReload = false
-        releasedUnsaved = false
         for _, r in ipairs(rows) do
             local rowButton = not GSE.isEmpty(r.seq) and GSE.StoredSequenceId(r.seq)
             if rowButton and _G[rowButton] and GSE.UpdateIcon then GSE.UpdateIcon(_G[rowButton]) end
         end
-        if saveButton then saveButton:SetDisabled(true) end
-        loadRows()
-        -- Put the half-set rows back, so Save never makes a row disappear, and
-        -- say what each one is still missing.
-        for _, r in ipairs(incomplete) do
-            table.insert(rows, r)
-            GSE.Print(string.format(L["%s was not saved: it still needs a %s."],
-                GSE.isEmpty(r.bind) and sequenceLabel(r.seq) or buttonLabel(r.bind),
-                GSE.isEmpty(r.bind) and L["Actionbar Button"] or L["Sequence"]), L["Button Bindings"])
-        end
-        if #incomplete > 0 and saveButton then saveButton:SetDisabled(false) end
-        redraw()
         editframe.ManageTree()
     end
 
@@ -2141,17 +2140,6 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
                 rows[index] = {}
             else
                 table.remove(rows, index)
-            end
-            -- The bar loses the override now, as it gains one the moment it is
-            -- assigned there; Save makes it permanent.  Not while another row
-            -- still names the button (a state of its own).
-            local bind, stillUsed = model.bind, false
-            for _, r in ipairs(rows) do
-                if r.bind == bind then stillUsed = true end
-            end
-            if not GSE.isEmpty(bind) and not stillUsed and GSE.ReleaseActionBarOverride
-                and GSE.ReleaseActionBarOverride(bind) then
-                releasedUnsaved = true
             end
             markDirty()
             redraw()
@@ -2270,9 +2258,9 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         button:SetCallback("OnLeave", function() GSE.ClearTooltip(editframe) end)
         local function choose(name)
             if name == model.bind then return end
-            -- One row per button (Save refuses two): the row that had this
-            -- button loses it ("Pick a button") and keeps its sequence for
-            -- whichever button it gets next.
+            -- One row per button: the row that had this button loses it
+            -- ("Pick a button") and keeps its sequence for whichever button it
+            -- gets next.
             local other
             for _, r in ipairs(rows) do
                 if r ~= model and r.bind == name then other = r end
@@ -2532,12 +2520,6 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         loadoutRow = centeredRow(loadoutLabel)
     end
 
-    saveButton = UI:Create("Button")
-    saveButton:SetText(L["Save"])
-    saveButton:SetWidth(120)
-    saveButton:SetDisabled(true)
-    saveButton:SetCallback("OnClick", save)
-
     rowContainer = UI:Create("SimpleGroup")
     rowContainer:SetFullWidth(true)
     rowContainer:SetLayout("List")
@@ -2604,12 +2586,17 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
     rightContainer:AddChild(rowContainer)
     rightContainer:AddChild(inheritedContainer)
 
-    -- Save pinned to the viewport bottom, centred on the footer's Resources
-    -- button; identical mechanism to the keybind panel.
+    -- No Save: changes apply as they are made (markDirty).  The shared row
+    -- is pinned to the viewport bottom, centred on the footer's Resources
+    -- button, where Save stands on the keybind panel; its anchor lives on
+    -- the ScrollFrame's own frame, which is not pooled, so it goes away with
+    -- the pane rather than leaking into another panel.
     local KB_SAVE_INSET = 8
-    local function pinSave()
+    local footAnchor = rightContainer.frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    footAnchor:SetText("")
+    local function pinFoot()
         local frame = rightContainer.frame
-        if not (frame and saveButton and saveButton.frame) then return end
+        if not frame then return end
         local dx = 0
         local resources = (editframe.sectionFooterChildrenCache or {})[1]
         local target = resources and resources.frame
@@ -2617,38 +2604,21 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
             local targetX, frameX = target:GetCenter(), frame:GetCenter()
             if targetX and frameX then dx = targetX - frameX end
         end
-        saveButton.frame:ClearAllPoints()
-        saveButton.frame:SetPoint("BOTTOM", frame, "BOTTOM", dx, KB_SAVE_INSET)
+        footAnchor:ClearAllPoints()
+        footAnchor:SetPoint("BOTTOM", frame, "BOTTOM", dx, KB_SAVE_INSET)
     end
-    saveButton.frame:SetParent(rightContainer.frame)
-    saveButton.frame:SetFrameLevel(rightContainer.frame:GetFrameLevel() + 10)
-    saveButton.frame:Show()
-    -- One line over Save, anchored to the button so it rides the pin.  Lives
-    -- on the ScrollFrame's own frame, which is not pooled, so it goes away
-    -- with the pane rather than leaking into another panel.
-    local saveHint = rightContainer.frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    saveHint:SetPoint("BOTTOM", saveButton.frame, "TOP", 0, 4)
-    saveHint:SetText(L["Pick each button's sequence and click Save."])
-    pinSave()
-    if C_Timer and C_Timer.After then C_Timer.After(0, pinSave) end
-    if rightContainer.frame.HookScript then rightContainer.frame:HookScript("OnSizeChanged", pinSave) end
+    pinFoot()
+    if C_Timer and C_Timer.After then C_Timer.After(0, pinFoot) end
+    if rightContainer.frame.HookScript then rightContainer.frame:HookScript("OnSizeChanged", pinFoot) end
     refitWithPane(rightContainer, tightenRows)
-    local sharedRowHeight = sharedRow and pinSharedRow(rightContainer, saveHint, sharedRow) or 0
+    local sharedRowHeight = sharedRow and pinSharedRow(rightContainer, footAnchor, sharedRow) or 0
     rightContainer:SetCallback("OnRelease", function()
-        saveButton:Release()
         if sharedRow then sharedRow:Release() end
-        -- Rows removed and never saved: the bar goes back to what is saved.
-        if releasedUnsaved and not InCombatLockdown() then
-            releasedUnsaved = false
-            ownOverrideReload = true
-            GSE.ReloadOverrides()
-            ownOverrideReload = false
-        end
     end)
 
     local bottomGutter = UI:Create("Spacer")
     bottomGutter:SetFullWidth(true)
-    bottomGutter:SetHeight(saveButton.frame:GetHeight() + KB_SAVE_INSET * 2 + 18 + sharedRowHeight)
+    bottomGutter:SetHeight(KB_SAVE_INSET * 2 + 18 + sharedRowHeight)
     rightContainer:AddChild(bottomGutter)
 
     redraw()
