@@ -1752,51 +1752,6 @@ local function openWoWKeyBindingsFor(action)
     return true
 end
 
--- Whether a bar button takes part in Blizzard's Quick Keybind Mode: it
--- carries QuickKeybindButtonTemplate (the highlight the mode lights) and
--- names its binding command, as Blizzard's bars and the GSE Action Bar do
--- (GSE_Actionbar/ActionBar.lua).  A bar addon with its own bind mode does
--- not, and its keys are set on the Key Bindings page instead.
-local function supportsQuickKeybind(buttonName)
-    local frame = not GSE.isEmpty(buttonName) and _G[buttonName]
-    return type(frame) == "table" and type(frame.commandName) == "string"
-        and frame.QuickKeybindHighlightTexture ~= nil
-        and _G.QuickKeybindFrame ~= nil and _G.QuickKeybindFrame.Show ~= nil
-end
-
--- Open Blizzard's Quick Keybind Mode -- hover the bar button, press the
--- key; Blizzard writes it.  The editor covers the bars, so it hides for the
--- mode the way minimising hides it (the flag keeps OnClose from tearing it
--- down) and comes back when the mode ends.  Leaving the mode reopens the
--- Settings panel -- Blizzard assumes that is where it was entered from
--- (QuickKeybindFrameMixin:OnHide) -- so that is closed again on the way
--- back.  Not in combat: the mode shows every bar's grid, which is secure.
-local quickKeybindReturn, quickKeybindHooked
-local function openQuickKeybindFor(editframe)
-    if InCombatLockdown() then return false end
-    local mode = _G.QuickKeybindFrame
-    if not quickKeybindHooked and mode.HookScript then
-        quickKeybindHooked = true
-        mode:HookScript("OnHide", function()
-            local back = quickKeybindReturn
-            quickKeybindReturn = nil
-            if not back then return end
-            if SettingsPanel and SettingsPanel.Close then pcall(SettingsPanel.Close, SettingsPanel, true) end
-            back:Show()
-            if back.treeContainer and back.treeContainer.RefreshNavWindow then back.treeContainer.RefreshNavWindow() end
-        end)
-    end
-    quickKeybindReturn = editframe
-    editframe.isMinimizing = true
-    editframe:Hide()
-    editframe.isMinimizing = nil
-    if editframe.treeContainer and editframe.treeContainer.navWindowFrame then
-        editframe.treeContainer.navWindowFrame:Hide()
-    end
-    mode:Show()
-    return true
-end
-
 local function stateListFor(buttonName)
     local frame = buttonName and _G[buttonName]
     if not (frame and frame.state_types) then return nil end
@@ -1826,6 +1781,44 @@ do
     watcher:SetScript("OnEvent", function()
         for _, refresh in ipairs(activeKeyRefreshers or {}) do pcall(refresh) end
     end)
+end
+-- Pressing a key for a bar button from this page, through Blizzard's own
+-- Quick Keybind Mode.  The mode is entered if it is not on -- the page stays
+-- up -- and the cell's slot (1 the key, 2 the backup) is armed on
+-- Blizzard's listener (KeybindListener, Blizzard_Keybindings.lua), the way
+-- hovering a bar button in the mode arms its command.  The next key press
+-- is Blizzard's to bind, and its bar's Okay keeps it or Cancel drops it;
+-- GSE writes no binding.  Not in combat: the mode shows every bar's grid.
+-- Leaving a mode entered from here reopens the Settings panel (Blizzard
+-- assumes that is where it came from, QuickKeybindFrameMixin:OnHide), so
+-- that is closed again; and the rows re-read their keys whenever the
+-- listener lets go, so a cell reads "Press a key..." only while it listens.
+local quickKeybindHooked, quickKeybindFromHere, listenOwner = nil, nil, {}
+local function listenForKey(action, slot)
+    local mode, listener = _G.QuickKeybindFrame, _G.KeybindListener
+    if not (action and mode and mode.Show and listener and listener.StartListening) then return false end
+    if InCombatLockdown() then return false end
+    local function refreshRows()
+        for _, refresh in ipairs(activeKeyRefreshers or {}) do pcall(refresh) end
+    end
+    if not quickKeybindHooked and mode.HookScript then
+        quickKeybindHooked = true
+        mode:HookScript("OnHide", function()
+            if not quickKeybindFromHere then return end
+            quickKeybindFromHere = nil
+            if SettingsPanel and SettingsPanel.Close then pcall(SettingsPanel.Close, SettingsPanel, true) end
+            refreshRows()
+        end)
+        if EventRegistry and EventRegistry.RegisterCallback then
+            EventRegistry:RegisterCallback("KeybindListener.StoppedListening", refreshRows, listenOwner)
+        end
+    end
+    if not (KeybindFrames_InQuickKeybindMode and KeybindFrames_InQuickKeybindMode()) then
+        quickKeybindFromHere = true
+        mode:Show()
+    end
+    listener:StartListening(action, slot)
+    return true
 end
 showOverridePanel = function(editframe, specialization, loadout, rightContainer)
     specialization = tostring(specialization or defaultSpecIndex())
@@ -2187,29 +2180,33 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         end
 
         -- The button's key and its backup key: its first binding in WoW's Key
-        -- Bindings, then the rest, as that panel lists them.  Shown, never set:
-        -- keys are set in WoW's own Key Bindings, and the row follows
-        -- (UPDATE_BINDINGS).  A click opens where that happens: Quick Keybind
-        -- Mode for a bar that has it, else the Key Bindings page at the button.
-        local function keyCell(width)
-            local cell = UI:Create("InteractiveLabel")
+        -- Bindings, then the rest, as that panel lists them.  Blizzard sets
+        -- them: a click arms Blizzard's Quick Keybind listener for the cell's
+        -- slot (listenForKey) and the next key press is its to bind; the row
+        -- follows (UPDATE_BINDINGS).  Where that cannot run, the Key Bindings
+        -- page at the button.
+        local function keyCell(width, slot)
+            local cell = UI:Create("Button")
             cell:SetWidth(width)
-            cell:SetJustifyH("CENTER")
-            cell:SetJustifyV("MIDDLE")
+            cell:SetHeight(KB_ROW_HEIGHT)
             cell:SetCallback("OnEnter", function()
-                local hint = L["Set for this button in WoW's Key Bindings.  Click to set it: Quick Keybind Mode where the bar has it, otherwise the Key Bindings page at this button."]
+                local hint = L["Click, then press the key: WoW's Quick Keybind Mode binds it, and Okay on its bar keeps it."]
                 local all = buttonKeysText(model.bind, "\n")
                 GSE.CreateToolTip(L["Key"], all and (all .. "\n\n" .. hint) or hint, editframe)
             end)
             cell:SetCallback("OnLeave", function() GSE.ClearTooltip(editframe) end)
             cell:SetCallback("OnClick", function()
                 GSE.ClearTooltip(editframe)
-                if supportsQuickKeybind(model.bind) and openQuickKeybindFor(editframe) then return end
-                openWoWKeyBindingsFor(bindingActionFor(model.bind))
+                local action = bindingActionFor(model.bind)
+                if listenForKey(action, slot) then
+                    cell:SetText(L["Press a key..."])
+                    return
+                end
+                openWoWKeyBindingsFor(action)
             end)
             return cell
         end
-        local key, keys = keyCell(AO_COL_KEY), keyCell(AO_COL_KEYS)
+        local key, keys = keyCell(AO_COL_KEY, 1), keyCell(AO_COL_KEYS, 2)
         local refreshButtonText
         -- WoW's keys for the button: the first, then every further one.
         local function keyTexts()
@@ -2226,10 +2223,9 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
                 -- through the |A..|a markup prints it as text.
                 cell:SetText(sizeGlyphs(text, 22))
             else
-                if text then text = fitText(cell.text, text, width - 4) end
-                cell:SetText(KB_INHERITED_COLOUR .. (text or "-") .. Statics.StringReset)
+                if text then text = fitText(cell.text, text, width - 12) end
+                cell:SetText(text or NOT_BOUND)
             end
-            cell:SetHeight(KB_ROW_HEIGHT)
         end
         local function refreshKeys()
             local first, second = keyTexts()
