@@ -738,19 +738,6 @@ end
 -- LibActionButton bar does its own (GetSpellId, above).
 -- shortcut: not put back if the bar hides it on an action change, add a hook if seen.
 local overrideAssisted = setmetatable({}, {__mode = "k"})
--- Whether one press of the button's current step casts a spell: every
--- /cast and /use line of the step, every branch, by id (buildIconSpells).
--- The icon shows one of them -- a racial off the global cooldown ahead of
--- the cooldown it is paired with -- and the highlight asks about the press.
-local function stepCasts(seq, spellID)
-    local action = getCurrentGSEAction(seq)
-    if type(action) ~= "table" then return false end
-    local ok, map = pcall(buildIconSpells, {action})
-    for _, id in pairs(ok and map or {}) do
-        if id == spellID then return true end
-    end
-    return false
-end
 local function applyOverrideAssist(button)
     local manager = _G.AssistedCombatManager
     if not (button and button.GetAttribute and manager and manager.SetAssistedHighlightFrameShown
@@ -758,7 +745,7 @@ local function applyOverrideAssist(button)
     local spellID, nextSpell, shown = overrideSpell[button], manager.lastNextCastSpellID, false
     if spellID and nextSpell and not isSecretValue(nextSpell) and manager:IsAssistedHighlightActive()
         and overrideShowing(button) then
-        shown = spellID == nextSpell or stepCasts(button:GetAttribute("gse-button"), nextSpell)
+        shown = spellID == nextSpell
     end
     if not shown and not overrideAssisted[button] then return end -- never hide a real action's
     overrideAssisted[button] = shown or nil
