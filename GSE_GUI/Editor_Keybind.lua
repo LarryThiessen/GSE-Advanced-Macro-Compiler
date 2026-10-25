@@ -1690,6 +1690,47 @@ local function buttonKeysText(buttonName, separator)
     return nil
 end
 
+-- The binding action WoW's Key Bindings lists for a button: the one
+-- buttonKeysText reads keys from or, unbound, the one its bar registers.
+-- Blizzard's bars bind by command; LibActionButton bars (Bartender4,
+-- Dominos, EllesmereUI) name theirs on the button; the rest bind a click.
+local function bindingActionFor(buttonName)
+    if GSE.isEmpty(buttonName) or not GetBindingKey then return nil end
+    local prefix, num = string.match(buttonName, "^(.-)(%d+)$")
+    local candidates = {}
+    if prefix and BAR_COMMANDS[prefix] then candidates[#candidates + 1] = BAR_COMMANDS[prefix] .. num end
+    local frame = _G[buttonName]
+    local command = type(frame) == "table" and (frame.commandName
+        or (frame.GetAttribute and frame:GetAttribute("commandName")))
+    if type(command) == "string" and command ~= "" then candidates[#candidates + 1] = command end
+    candidates[#candidates + 1] = "CLICK " .. buttonName .. ":LeftButton"
+    candidates[#candidates + 1] = "CLICK " .. buttonName .. ":Keybind"
+    for _, action in ipairs(candidates) do
+        if bindingKeys(action) then return action end
+    end
+    return candidates[1]
+end
+
+-- Open WoW's own Key Bindings page at the row for a binding action, where
+-- the key is set: GSE never writes a bar's binding itself.  The page is
+-- searched for the row by the name Key Bindings gives the action
+-- (GetBindingName), which lands on it whichever bar addon's section holds
+-- it; a click binding with no name opens the page unsearched.  The search
+-- box ignores its first text change after load (SettingsPanel treats it as
+-- initialisation), so the text is cleared first.  False where the client
+-- has no Settings panel to open.
+local function openWoWKeyBindingsFor(action)
+    if not (Settings and Settings.OpenToCategory and Settings.KEYBINDINGS_CATEGORY_ID) then return false end
+    Settings.OpenToCategory(Settings.KEYBINDINGS_CATEGORY_ID)
+    local name = action and GetBindingName and GetBindingName(action)
+    local box = SettingsPanel and SettingsPanel.SearchBox
+    if name and name ~= action and box and box.SetText then
+        box:SetText("")
+        box:SetText(name)
+    end
+    return true
+end
+
 local function stateListFor(buttonName)
     local frame = buttonName and _G[buttonName]
     if not (frame and frame.state_types) then return nil end
@@ -2080,19 +2121,24 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         end
 
         -- The button's key and its backup key: its first binding in WoW's Key
-        -- Bindings, then the rest, as that panel lists them.  Shown only: keys
-        -- are set in WoW's own Key Bindings, and the row follows (UPDATE_BINDINGS).
+        -- Bindings, then the rest, as that panel lists them.  Shown, never set:
+        -- keys are set in WoW's own Key Bindings, and the row follows
+        -- (UPDATE_BINDINGS).  A click opens that page at this button's row.
         local function keyCell(width)
             local cell = UI:Create("InteractiveLabel")
             cell:SetWidth(width)
             cell:SetJustifyH("CENTER")
             cell:SetJustifyV("MIDDLE")
             cell:SetCallback("OnEnter", function()
-                local hint = L["Set for this button in WoW's Key Bindings.  Change this in WoW's Options -> Keybindings."]
+                local hint = L["Set for this button in WoW's Key Bindings.  Click to open that page at this button."]
                 local all = buttonKeysText(model.bind, "\n")
                 GSE.CreateToolTip(L["Key"], all and (all .. "\n\n" .. hint) or hint, editframe)
             end)
             cell:SetCallback("OnLeave", function() GSE.ClearTooltip(editframe) end)
+            cell:SetCallback("OnClick", function()
+                GSE.ClearTooltip(editframe)
+                openWoWKeyBindingsFor(bindingActionFor(model.bind))
+            end)
             return cell
         end
         local key, keys = keyCell(AO_COL_KEY), keyCell(AO_COL_KEYS)
