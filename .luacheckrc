@@ -49,6 +49,7 @@ globals = {
     "ATTACK_BUTTON_FLASH_TIME",
     "TOOLTIP_UPDATE_TIME",
     "GetBindingKey",
+    "GetBindingName",
     "C_LevelLink",
     "CooldownFrame_Set",
     "C_UnitAuras",
