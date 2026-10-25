@@ -2146,7 +2146,7 @@ end
 local CHECKBOX_TEMPLATE = "SettingsCheckboxControlTemplate"
 local PAIR_ROW_HEIGHT = 26
 local CENTRE_COLUMN_HALF = 185 -- a quarter of the list's width, before the row is sized
-local CENTRE_COLUMN_NUDGE = 1.5 -- measured: equal gaps from the page container's edges to the label and from the box (204.2 / 204.3)
+local CENTRE_COLUMN_NUDGE = 11.5 -- the centred column sits this far left of the row's centre (Larry's placement)
 -- A row of one or two checkboxes: two share it left and right; one alone
 -- sits in the middle half (a centred column, as rows stacked under it line up).
 local function pairedCheckboxRow(left, right)
