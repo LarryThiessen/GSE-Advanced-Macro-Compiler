@@ -2145,9 +2145,12 @@ end
 -- carries both labels as search tags.
 local CHECKBOX_TEMPLATE = "SettingsCheckboxControlTemplate"
 local PAIR_ROW_HEIGHT = 26
+local CENTRE_COLUMN_HALF = 185 -- a quarter of the list's width, before the row is sized
+-- A row of one or two checkboxes: two share it left and right; one alone
+-- sits in the middle half (a centred column, as rows stacked under it line up).
 local function pairedCheckboxRow(left, right)
     local row = Settings.CreateElementInitializer("SettingsListElementTemplate", { name = "" })
-    if row.AddSearchTags then row:AddSearchTags(left:GetName(), right:GetName()) end
+    if row.AddSearchTags then row:AddSearchTags(left:GetName(), right and right:GetName() or nil) end
     function row:GetExtent() return PAIR_ROW_HEIGHT end
     -- Blizzard's plain row template has no OnLoad, so its own Init cannot run
     -- (see the note rows on the Action Bar page): the row only hosts the two
@@ -2163,33 +2166,46 @@ local function pairedCheckboxRow(left, right)
                 frame.GSEPair[i] = control
             end
         end
-        for i, init in ipairs({ left, right }) do
-            local control = frame.GSEPair[i]
-            -- Set up again without a reset: Blizzard's Init asserts its
-            -- callbacks are empty, so hand the old ones back first.
-            if control.GSEPairInit then control:Release() end
-            control.GSEPairInit = init
-            control:ClearAllPoints()
-            if i == 1 then
-                control:SetPoint("TOPLEFT", frame, "TOPLEFT")
-                control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM")
+        local inits = { left, right }
+        for i = 1, 2 do
+            local init, control = inits[i], frame.GSEPair[i]
+            if not init then
+                if control.GSEPairInit then control:Release() end
+                control.GSEPairInit = nil
+                control:Hide()
             else
-                control:SetPoint("TOPLEFT", frame, "TOP")
-                control:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
+                -- Set up again without a reset: Blizzard's Init asserts its
+                -- callbacks are empty, so hand the old ones back first.
+                if control.GSEPairInit then control:Release() end
+                control.GSEPairInit = init
+                control:ClearAllPoints()
+                if not right then
+                    -- The middle half: a quarter of the row in from each side.
+                    local quarter = (frame:GetWidth() or 0) / 4
+                    if quarter <= 0 then quarter = CENTRE_COLUMN_HALF end
+                    control:SetPoint("TOPLEFT", frame, "TOP", -quarter, 0)
+                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM", quarter, 0)
+                elseif i == 1 then
+                    control:SetPoint("TOPLEFT", frame, "TOPLEFT")
+                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM")
+                else
+                    control:SetPoint("TOPLEFT", frame, "TOP")
+                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
+                end
+                control:Init(init)
+                -- In half a row the stock places (label up to the centre - 85,
+                -- box at the centre - 80) leave no room: the box goes near the
+                -- half's right edge and the label runs up to it.
+                control.Checkbox:ClearAllPoints()
+                control.Checkbox:SetPoint("RIGHT", control, "RIGHT", -24, 0)
+                control.Text:ClearAllPoints()
+                control.Text:SetPoint("LEFT", control, "LEFT", control:GetIndent() + 37, 0)
+                control.Text:SetPoint("RIGHT", control.Checkbox, "LEFT", -8, 0)
+                control.Tooltip:ClearAllPoints()
+                control.Tooltip:SetPoint("TOPLEFT", control, "TOPLEFT")
+                control.Tooltip:SetPoint("BOTTOMRIGHT", control.Checkbox, "BOTTOMLEFT", -4, 0)
+                control:Show()
             end
-            control:Init(init)
-            -- In half a row the stock places (label up to the centre - 85,
-            -- box at the centre - 80) leave no room: the box goes near the
-            -- half's right edge and the label runs up to it.
-            control.Checkbox:ClearAllPoints()
-            control.Checkbox:SetPoint("RIGHT", control, "RIGHT", -24, 0)
-            control.Text:ClearAllPoints()
-            control.Text:SetPoint("LEFT", control, "LEFT", control:GetIndent() + 37, 0)
-            control.Text:SetPoint("RIGHT", control.Checkbox, "LEFT", -8, 0)
-            control.Tooltip:ClearAllPoints()
-            control.Tooltip:SetPoint("TOPLEFT", control, "TOPLEFT")
-            control.Tooltip:SetPoint("BOTTOMRIGHT", control.Checkbox, "BOTTOMLEFT", -4, 0)
-            control:Show()
         end
     end
     function row:Resetter(frame)
@@ -2203,17 +2219,27 @@ local function pairedCheckboxRow(left, right)
     end
     return row
 end
-local function pairCheckboxRows(category)
+-- `centred`: setting variables whose checkbox stands alone in the centred
+-- column instead of pairing.
+local function pairCheckboxRows(category, centred)
+    centred = centred or {}
     local layout = category and SettingsPanel:GetLayout(category)
     local initializers = layout and layout.GetInitializers and layout:GetInitializers()
     if not initializers then return end
     local function isCheckbox(init)
         return init and init.GetTemplate and init:GetTemplate() == CHECKBOX_TEMPLATE
     end
+    local function isCentred(init)
+        local setting = isCheckbox(init) and init.GetSetting and init:GetSetting()
+        return setting and centred[setting:GetVariable()] or false
+    end
     local out, i = {}, 1
     while i <= #initializers do
         local init, nextInit = initializers[i], initializers[i + 1]
-        if isCheckbox(init) and isCheckbox(nextInit) then
+        if isCentred(init) then
+            out[#out + 1] = pairedCheckboxRow(init, nil)
+            i = i + 1
+        elseif isCheckbox(init) and isCheckbox(nextInit) and not isCentred(nextInit) then
             out[#out + 1] = pairedCheckboxRow(init, nextInit)
             i = i + 2
         else
@@ -3372,8 +3398,12 @@ function GSE:CreateConfigPanels()
         end
 
         createBlizzOptions(category, pluginOptions, nil, generalOptions)
-        -- The General page in two columns (pairCheckboxRows).
-        pairCheckboxRows(generalOptions)
+        -- The General page in two columns (pairCheckboxRows); the override
+        -- button options stacked in a centred column.
+        pairCheckboxRows(generalOptions, {
+            gseActionBarReportOverridesGeneral = true, actionBarLabel = true,
+            actionBarWatermark = true, actionBarKeepIconColour = true,
+        })
 
         -- Skyriding / Vehicle Keybinds subcategory is registered natively
         -- by GSE_QoL/QoL.lua via Settings.RegisterVerticalLayoutSubcategory
