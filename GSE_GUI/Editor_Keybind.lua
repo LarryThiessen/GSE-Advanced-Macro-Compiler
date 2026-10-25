@@ -2621,7 +2621,7 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
     -- with the pane rather than leaking into another panel.
     local saveHint = rightContainer.frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     saveHint:SetPoint("BOTTOM", saveButton.frame, "TOP", 0, 4)
-    saveHint:SetText(L["Set All of your Binds and Click Save!"])
+    saveHint:SetText(L["Pick each button's sequence and click Save."])
     pinSave()
     if C_Timer and C_Timer.After then C_Timer.After(0, pinSave) end
     if rightContainer.frame.HookScript then rightContainer.frame:HookScript("OnSizeChanged", pinSave) end
