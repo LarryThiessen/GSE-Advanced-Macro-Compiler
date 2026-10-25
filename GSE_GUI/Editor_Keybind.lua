@@ -1734,9 +1734,10 @@ end
 -- section's own initializer before the page draws, since the section reads
 -- that at Init and an addon's section starts collapsed.  An action with no
 -- section opens the page at its top.  False where the client has no
--- Settings panel to open.
+-- Settings panel to open, and in combat, where opening it is protected.
 local function openWoWKeyBindingsFor(action)
     if not (Settings and Settings.OpenToCategory and Settings.KEYBINDINGS_CATEGORY_ID) then return false end
+    if InCombatLockdown() then return false end
     local header = bindingHeaderFor(action)
     local category = header and SettingsPanel and SettingsPanel.GetCategory
         and SettingsPanel:GetCategory(Settings.KEYBINDINGS_CATEGORY_ID)
@@ -2197,6 +2198,12 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
             cell:SetCallback("OnLeave", function() GSE.ClearTooltip(editframe) end)
             cell:SetCallback("OnClick", function()
                 GSE.ClearTooltip(editframe)
+                -- Neither way runs in combat: the mode shows every bar's
+                -- grid and the Settings panel is protected.
+                if InCombatLockdown() then
+                    GSE.Print(ERR_NOT_IN_COMBAT, L["Button Bindings"])
+                    return
+                end
                 local action = bindingActionFor(model.bind)
                 if listenForKey(action, slot) then
                     cell:SetText(L["Press a key..."])
