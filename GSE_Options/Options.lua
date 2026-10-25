@@ -1976,9 +1976,13 @@ local function createAboutPanel()
         aboutDesc:SetPoint("TOPLEFT", histHeader, "BOTTOMLEFT", 0, -6)
         aboutDesc:SetText(L["GSE was originally forked from GnomeSequencer written by semlar.  It was enhanced by TimothyLuke to include a lot of configuration and boilerplate functionality with a GUI added.  The enhancements pushed the limits of what the original code could handle and was rewritten from scratch into GSE.\n\nGSE itself wouldn't be what it is without the efforts of the all the GSE Sequence Creators / Community who helped me make what GSE is today.  Check out https://discord.gg/gseunited and https://gseunited.com for the things that make this mod work.  I also want to acknowledge Lutechi for creating the original WowLazyMacros community which we have grown out of."])
 
-        -- Version (anchored below logo)
+        -- Version below whichever ends lower, the logo or the History text
+        -- beside it: the text runs past the logo's foot, and anchored to
+        -- the logo alone the two overlapped. Measured once the text is set.
+        local besideHeight = histHeader:GetStringHeight() + 6 + aboutDesc:GetStringHeight()
+        local belowLogo = math.max(0, math.ceil(besideHeight - ABOUT_LOGO_HEIGHT))
         local versionHeader = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
-        versionHeader:SetPoint("TOPLEFT", logo, "BOTTOMLEFT", 0, -padding)
+        versionHeader:SetPoint("TOPLEFT", logo, "BOTTOMLEFT", 0, -padding - belowLogo)
         versionHeader:SetTextColor(HEADER_GOLD_R, HEADER_GOLD_G, HEADER_GOLD_B)
         versionHeader:SetText(L["Version"])
 
