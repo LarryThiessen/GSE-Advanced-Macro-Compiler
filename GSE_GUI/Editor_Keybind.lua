@@ -2186,6 +2186,7 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
             cell:SetCallback("OnLeave", function() GSE.ClearTooltip(editframe) end)
             cell:SetCallback("OnClick", function()
                 GSE.ClearTooltip(editframe)
+                if GSE.isEmpty(model.bind) then return end
                 -- Neither way runs in combat: the mode shows every bar's
                 -- grid and the Settings panel is protected.
                 if InCombatLockdown() then
@@ -2226,6 +2227,9 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
             local first, second = keyTexts()
             fillKeyCell(key, AO_COL_KEY, first)
             fillKeyCell(keys, AO_COL_KEYS, second)
+            -- No button yet, nothing to bind: greyed until one is picked.
+            key:SetDisabled(GSE.isEmpty(model.bind))
+            keys:SetDisabled(GSE.isEmpty(model.bind))
             if refreshButtonText then refreshButtonText() end
         end
         -- A key set in WoW's Key Bindings while the pane is open shows at once.
