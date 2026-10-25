@@ -2135,6 +2135,96 @@ local function addActionBarModuleSwitch(optionsCategory, page)
         L["Two bars of twelve buttons whose keys are set in WoW's Key Bindings, under GSE. They hold spells, items and macros like any action bar, and sequences: put one on a button in Button Bindings, by right-clicking it, or by dragging the sequence onto it. Turning the module on loads it and moves GSE's keybinds onto its buttons; while it is off, none of its settings can be changed."])
 end
 
+-- Two columns: consecutive checkboxes in a section share one row, left and
+-- right, each still Blizzard's own checkbox control (SettingsCheckboxControl
+-- Template) on its own initializer -- same look, tooltip, greying under a
+-- parent switch and Defaults -- the way Blizzard's checkbox-and-slider row
+-- holds two controls (CreateSettingsCheckboxSliderInitializer). Run once a
+-- page's layout is built; a section header, any other control, or the end of
+-- the page closes a pair, so a lone checkbox keeps a row to itself. The row
+-- carries both labels as search tags.
+local CHECKBOX_TEMPLATE = "SettingsCheckboxControlTemplate"
+local PAIR_ROW_HEIGHT = 26
+local function pairedCheckboxRow(left, right)
+    local row = Settings.CreateElementInitializer("SettingsListElementTemplate", { name = "" })
+    if row.AddSearchTags then row:AddSearchTags(left:GetName(), right:GetName()) end
+    function row:GetExtent() return PAIR_ROW_HEIGHT end
+    -- Blizzard's plain row template has no OnLoad, so its own Init cannot run
+    -- (see the note rows on the Action Bar page): the row only hosts the two
+    -- controls, made once per row frame and handed back on Resetter.
+    function row:InitFrame(frame)
+        frame.Text:SetText("")
+        if not frame.GSEPair then
+            frame.GSEPair = {}
+            for i = 1, 2 do
+                local control = CreateFrame("Frame", nil, frame, CHECKBOX_TEMPLATE)
+                -- The control reads its initializer as a list element would.
+                function control:GetElementData() return self.GSEPairInit end
+                frame.GSEPair[i] = control
+            end
+        end
+        for i, init in ipairs({ left, right }) do
+            local control = frame.GSEPair[i]
+            -- Set up again without a reset: Blizzard's Init asserts its
+            -- callbacks are empty, so hand the old ones back first.
+            if control.GSEPairInit then control:Release() end
+            control.GSEPairInit = init
+            control:ClearAllPoints()
+            if i == 1 then
+                control:SetPoint("TOPLEFT", frame, "TOPLEFT")
+                control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM")
+            else
+                control:SetPoint("TOPLEFT", frame, "TOP")
+                control:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
+            end
+            control:Init(init)
+            -- In half a row the stock places (label up to the centre - 85,
+            -- box at the centre - 80) leave no room: the box goes near the
+            -- half's right edge and the label runs up to it.
+            control.Checkbox:ClearAllPoints()
+            control.Checkbox:SetPoint("RIGHT", control, "RIGHT", -24, 0)
+            control.Text:ClearAllPoints()
+            control.Text:SetPoint("LEFT", control, "LEFT", control:GetIndent() + 37, 0)
+            control.Text:SetPoint("RIGHT", control.Checkbox, "LEFT", -8, 0)
+            control.Tooltip:ClearAllPoints()
+            control.Tooltip:SetPoint("TOPLEFT", control, "TOPLEFT")
+            control.Tooltip:SetPoint("BOTTOMRIGHT", control.Checkbox, "BOTTOMLEFT", -4, 0)
+            control:Show()
+        end
+    end
+    function row:Resetter(frame)
+        for _, control in ipairs(frame.GSEPair or {}) do
+            if control.GSEPairInit then
+                control:Release()
+                control.GSEPairInit = nil
+            end
+            control:Hide()
+        end
+    end
+    return row
+end
+local function pairCheckboxRows(category)
+    local layout = category and SettingsPanel:GetLayout(category)
+    local initializers = layout and layout.GetInitializers and layout:GetInitializers()
+    if not initializers then return end
+    local function isCheckbox(init)
+        return init and init.GetTemplate and init:GetTemplate() == CHECKBOX_TEMPLATE
+    end
+    local out, i = {}, 1
+    while i <= #initializers do
+        local init, nextInit = initializers[i], initializers[i + 1]
+        if isCheckbox(init) and isCheckbox(nextInit) then
+            out[#out + 1] = pairedCheckboxRow(init, nextInit)
+            i = i + 2
+        else
+            out[#out + 1] = init
+            i = i + 1
+        end
+    end
+    wipe(initializers)
+    for _, init in ipairs(out) do initializers[#initializers + 1] = init end
+end
+
 local function createBlizzOptions(category, pluginOptions, colourOptions, generalOptions)
     local windowOptions = Settings.RegisterVerticalLayoutSubcategory(category, "Windows & Layout")
     -- GSE Action Bar (GSE_Actionbar): the module's switch, then each bar's
@@ -3282,6 +3372,8 @@ function GSE:CreateConfigPanels()
         end
 
         createBlizzOptions(category, pluginOptions, nil, generalOptions)
+        -- The General page in two columns (pairCheckboxRows).
+        pairCheckboxRows(generalOptions)
 
         -- Skyriding / Vehicle Keybinds subcategory is registered natively
         -- by GSE_QoL/QoL.lua via Settings.RegisterVerticalLayoutSubcategory
