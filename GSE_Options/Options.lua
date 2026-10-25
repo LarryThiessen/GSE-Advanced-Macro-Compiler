@@ -2146,6 +2146,7 @@ end
 local CHECKBOX_TEMPLATE = "SettingsCheckboxControlTemplate"
 local PAIR_ROW_HEIGHT = 26
 local CENTRE_COLUMN_HALF = 185 -- a quarter of the list's width, before the row is sized
+local CENTRE_COLUMN_NUDGE = 20 -- the centred column sits this far left of centre (set by eye)
 -- A row of one or two checkboxes: two share it left and right; one alone
 -- sits in the middle half (a centred column, as rows stacked under it line up).
 local function pairedCheckboxRow(left, right)
@@ -2183,8 +2184,8 @@ local function pairedCheckboxRow(left, right)
                     -- The middle half: a quarter of the row in from each side.
                     local quarter = (frame:GetWidth() or 0) / 4
                     if quarter <= 0 then quarter = CENTRE_COLUMN_HALF end
-                    control:SetPoint("TOPLEFT", frame, "TOP", -quarter, 0)
-                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM", quarter, 0)
+                    control:SetPoint("TOPLEFT", frame, "TOP", -quarter - CENTRE_COLUMN_NUDGE, 0)
+                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM", quarter - CENTRE_COLUMN_NUDGE, 0)
                 elseif i == 1 then
                     control:SetPoint("TOPLEFT", frame, "TOPLEFT")
                     control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM")
