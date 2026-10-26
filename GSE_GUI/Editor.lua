@@ -774,7 +774,10 @@ local function QueueFitPush(macroEditBox, delta)
     pendingFitPushes[#pendingFitPushes + 1] = { macroEditBox, delta }
     fitFlushDriver:Show()
 end
-local function FitMacroEditBoxToContent(macroEditBox, text)
+-- `atNewWidth`: the box has just been laid out at another width, so the
+-- edit box's current height is the last fit's, made at the old width --
+-- the meter alone measures the text.
+local function FitMacroEditBoxToContent(macroEditBox, text, atNewWidth)
     if not (macroEditBox and macroEditBox.SetHeight) then return end
     local eb = macroEditBox.editBox or macroEditBox.editbox
     if not eb then return end
@@ -817,7 +820,7 @@ local function FitMacroEditBoxToContent(macroEditBox, text)
     -- Take whichever is taller: the box must never be shorter than what the
     -- editbox actually draws.
     local rendered = eb.GetHeight and eb:GetHeight() or 0
-    if rendered > textHeight then textHeight = rendered end
+    if rendered > textHeight and not atNewWidth then textHeight = rendered end
     if typingOnTrailingRow then textHeight = textHeight + oneRow + spacing end
     -- The box fits its content, so its scrollbar is dead weight: hide it. (A
     -- 255-char block cannot realistically reach the row cap; one that did needs
@@ -5740,7 +5743,7 @@ function GSE.CreateEditor()
 				fitBox:HookScript("OnSizeChanged", function(_, width)
 					if not fitWidget.gseFitOnWidth or not width or width == fitWidget.gseFitWidth then return end
 					fitWidget.gseFitWidth = width
-					FitMacroEditBoxToContent(fitWidget, fitWidget:GetText())
+					FitMacroEditBoxToContent(fitWidget, fitWidget:GetText(), true)
 				end)
 			end
 			-- Keep the action icon vertically centred on the macro box as the box
