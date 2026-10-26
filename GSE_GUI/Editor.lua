@@ -5726,6 +5726,23 @@ function GSE.CreateEditor()
 			-- the fit pushes the height delta up through macrolayout/macroFields/
 			-- macroBody (all explicit-height, sized above for the 108px baseline).
 			FitMacroEditBoxToContent(macroeditbox, macroeditbox:GetText())
+			-- That fit measures the text at the box's width before the layout has
+			-- run (256, not the ~600 it is drawn at), so long lines count as
+			-- wrapped and the box comes out several rows too tall. Fit again
+			-- whenever the box's width changes -- the layout's, and any editor
+			-- resize. The engine's deferred OnTextChanged used to do this by
+			-- accident; it is ignored now (editIsStale). Once per widget life:
+			-- the pool puts the box's scripts back, this hook with them.
+			local fitBox = macroeditbox.editBox or macroeditbox.editbox
+			if fitBox and fitBox.HookScript and not macroeditbox.gseFitOnWidth then
+				macroeditbox.gseFitOnWidth = true
+				local fitWidget = macroeditbox
+				fitBox:HookScript("OnSizeChanged", function(_, width)
+					if not fitWidget.gseFitOnWidth or not width or width == fitWidget.gseFitWidth then return end
+					fitWidget.gseFitWidth = width
+					FitMacroEditBoxToContent(fitWidget, fitWidget:GetText())
+				end)
+			end
 			-- Keep the action icon vertically centred on the macro box as the box
 			-- resizes: anchor the icon's centre to the box's left edge -- a live WoW
 			-- anchor follows every height change with no per-resize math -- and
