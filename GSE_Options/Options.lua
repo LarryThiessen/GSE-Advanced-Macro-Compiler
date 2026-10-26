@@ -1600,8 +1600,9 @@ local function AddActionBarIconColourOption(optionsCategory)
 end
 
 -- On by default: chat says when a key stops running a sequence on an action
--- bar button. See GSE/API/OverrideKeys.lua.
-local function AddActionBarKeyChangesOption(optionsCategory)
+-- bar button. See GSE/API/OverrideKeys.lua. Under parent, beside the other
+-- report, but never greyed out by it: it watches the keys of any bar.
+local function AddActionBarKeyChangesOption(optionsCategory, parent)
     do
         local function GetValue()
             return GSEOptions.actionBarReportKeyChanges ~= false
@@ -1610,7 +1611,10 @@ local function AddActionBarKeyChangesOption(optionsCategory)
             GSEOptions.actionBarReportKeyChanges = val == true
         end
         local setting = Settings.RegisterProxySetting(optionsCategory, "actionBarReportKeyChanges", Settings.VarType.Boolean, L["Report Key Changes"], true, GetValue, SetValue)
-        Settings.CreateCheckbox(optionsCategory, setting, L["Say in chat when the key on an action bar button with a sequence on it is cleared or bound to something else, so the sequence no longer runs from that key."])
+        local init = Settings.CreateCheckbox(optionsCategory, setting, L["Say in chat when the key on an action bar button with a sequence on it is cleared or bound to something else, so the sequence no longer runs from that key."])
+        if init and init.SetParentInitializer and parent then
+            init:SetParentInitializer(parent, function() return true end)
+        end
     end
 end
 
@@ -1644,7 +1648,7 @@ local function AddActionBarClickBehaviorOptions(optionsCategory)
             end
         end
         local setting = Settings.RegisterProxySetting(optionsCategory, "GSE_ActionButtonUseKeyDown", Settings.VarType.Boolean, L["ActionButtonUseKeyDown"], false, GetValue, SetValue)
-        Settings.CreateCheckbox(optionsCategory, setting, L["This is a common WoW setting used by all addons; it controls when your action buttons respond.  On: they react when you press the key (key-down).  Off: they react when you release it (key-up).  GSE now works either way -- Button Bindings and keybinds fire a single step in both states.  With this on, GSE keybinds also fire on key-down for a faster response.  Changes apply immediately out of combat (or on your next rebind if toggled mid-combat)."])
+        Settings.CreateCheckbox(optionsCategory, setting, L["A WoW setting shared by every addon: on, your action buttons act when you press a key; off, when you let it go. Neither up nor down affects GSE's buttons: a press runs one step either way, on GSE's action bar, any other bar, or a GSE keybind."])
     end
 end
 
@@ -1970,15 +1974,15 @@ local function createAboutPanel()
         content:SetHeight(1)
         scrollFrame:SetScrollChild(content)
 
-        -- Logo (left of content), placed below once the History text beside
-        -- it is measured.
+        -- Logo (top-left of content)
         local logo = content:CreateTexture(nil, "ARTWORK")
         logo:SetTexture(ABOUT_LOGO_TEXTURE)
         logo:SetSize(ABOUT_LOGO_WIDTH, ABOUT_LOGO_HEIGHT)
+        logo:SetPoint("TOPLEFT", content, "TOPLEFT", padding, -padding)
 
-        -- History header (right of the logo's column, at the top)
+        -- History header (right of logo, aligned to top)
         local histHeader = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
-        histHeader:SetPoint("TOPLEFT", content, "TOPLEFT", padding + ABOUT_LOGO_WIDTH + padding, -padding)
+        histHeader:SetPoint("TOPLEFT", logo, "TOPRIGHT", padding, 0)
         histHeader:SetTextColor(HEADER_GOLD_R, HEADER_GOLD_G, HEADER_GOLD_B)
         histHeader:SetText(L["History"])
 
@@ -1991,16 +1995,9 @@ local function createAboutPanel()
         aboutDesc:SetPoint("TOPLEFT", histHeader, "BOTTOMLEFT", 0, -6)
         aboutDesc:SetText(L["GSE was originally forked from GnomeSequencer written by semlar.  It was enhanced by TimothyLuke to include a lot of configuration and boilerplate functionality with a GUI added.  The enhancements pushed the limits of what the original code could handle and was rewritten from scratch into GSE.\n\nGSE itself wouldn't be what it is without the efforts of the all the GSE Sequence Creators / Community who helped me make what GSE is today.  Check out https://discord.gg/gseunited and https://gseunited.com for the things that make this mod work.  I also want to acknowledge Lutechi for creating the original WowLazyMacros community which we have grown out of."])
 
-        -- The logo centred on the History heading and text beside it, and
-        -- Version below whichever then ends lower: the text runs past the
-        -- logo's foot, and under the logo alone the two overlapped. Measured
-        -- once the text is set.
-        local besideHeight = histHeader:GetStringHeight() + 6 + aboutDesc:GetStringHeight()
-        local logoDown = math.max(0, math.floor((besideHeight - ABOUT_LOGO_HEIGHT) / 2 + 0.5))
-        logo:SetPoint("TOPLEFT", content, "TOPLEFT", padding, -padding - logoDown)
-        local belowLogo = math.max(0, math.ceil(besideHeight - ABOUT_LOGO_HEIGHT - logoDown))
+        -- Version (anchored below logo)
         local versionHeader = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
-        versionHeader:SetPoint("TOPLEFT", logo, "BOTTOMLEFT", 0, -padding - belowLogo)
+        versionHeader:SetPoint("TOPLEFT", logo, "BOTTOMLEFT", 0, -padding)
         versionHeader:SetTextColor(HEADER_GOLD_R, HEADER_GOLD_G, HEADER_GOLD_B)
         versionHeader:SetText(L["Version"])
 
@@ -2125,11 +2122,12 @@ end
 -- createBlizzOptions registers the three vertical-layout subcategories
 -- that hang off the main GSE entry:
 --   * Windows & Layout -- Toolbar / Editor scale, Debug window size,
---     watermark toggle, button-behaviour CVar (ActionButtonUseKeyDown),
+--     watermark toggle,
 --     MS Click Timing, Companion App, Import & Export defaults, Editor
 --     sequence-list filters, and the GSE Toolbar / Editor open
 --     buttons.
---   * Tools & Diagnostics -- the "Modifier Hold to Pause" section
+--   * Tools & Diagnostics -- the Action Button CVar (ActionButtonUseKeyDown),
+--     the "Modifier Hold to Pause" section
 --     (added in upstream 3.3.19-10), Spell Cache controls, Tracker /
 --     Keybind Diagnostics with the sequence icon frame and successful
 --     cast frame toggles, master tracker enable, and the Plugins
@@ -2152,126 +2150,9 @@ local function addActionBarModuleSwitch(optionsCategory)
         if GSE.ActionBarRefresh then GSE.ActionBarRefresh() end
     end
     local setting = Settings.RegisterProxySetting(optionsCategory, "gseActionBarModuleGeneral",
-        Settings.VarType.Boolean, L["GSE Action Bar Module"], false, GetValue, SetValue)
+        Settings.VarType.Boolean, L["Enable the GSE Action bars"], false, GetValue, SetValue)
     return Settings.CreateCheckbox(optionsCategory, setting,
         L["Two bars of twelve buttons whose keys are set in WoW's Key Bindings, under GSE. They hold spells, items and macros like any action bar, and sequences: put one on a button in Button Bindings, by right-clicking it, or by dragging the sequence onto it. Turning the module on loads it and moves GSE's keybinds onto its buttons; while it is off, none of its settings can be changed."])
-end
-
--- Two columns: consecutive checkboxes in a section share one row, left and
--- right, each still Blizzard's own checkbox control (SettingsCheckboxControl
--- Template) on its own initializer -- same look, tooltip, greying under a
--- parent switch and Defaults -- the way Blizzard's checkbox-and-slider row
--- holds two controls (CreateSettingsCheckboxSliderInitializer). Run once a
--- page's layout is built; a section header, any other control, or the end of
--- the page closes a pair, so a lone checkbox keeps a row to itself. The row
--- carries both labels as search tags.
-local CHECKBOX_TEMPLATE = "SettingsCheckboxControlTemplate"
-local PAIR_ROW_HEIGHT = 26
-local CENTRE_COLUMN_HALF = 185 -- a quarter of the list's width, before the row is sized
-local CENTRE_COLUMN_NUDGE = 6.5 -- the centred column sits this far left of the row's centre (Larry's placement)
--- A row of one or two checkboxes: two share it left and right; one alone
--- sits in the middle half (a centred column, as rows stacked under it line up).
-local function pairedCheckboxRow(left, right)
-    local row = Settings.CreateElementInitializer("SettingsListElementTemplate", { name = "" })
-    if row.AddSearchTags then row:AddSearchTags(left:GetName(), right and right:GetName() or nil) end
-    function row:GetExtent() return PAIR_ROW_HEIGHT end
-    -- Blizzard's plain row template has no OnLoad, so its own Init cannot run
-    -- (see the note rows on the Action Bar page): the row only hosts the two
-    -- controls, made once per row frame and handed back on Resetter.
-    function row:InitFrame(frame)
-        frame.Text:SetText("")
-        if not frame.GSEPair then
-            frame.GSEPair = {}
-            for i = 1, 2 do
-                local control = CreateFrame("Frame", nil, frame, CHECKBOX_TEMPLATE)
-                -- The control reads its initializer as a list element would.
-                function control:GetElementData() return self.GSEPairInit end
-                frame.GSEPair[i] = control
-            end
-        end
-        local inits = { left, right }
-        for i = 1, 2 do
-            local init, control = inits[i], frame.GSEPair[i]
-            if not init then
-                if control.GSEPairInit then control:Release() end
-                control.GSEPairInit = nil
-                control:Hide()
-            else
-                -- Set up again without a reset: Blizzard's Init asserts its
-                -- callbacks are empty, so hand the old ones back first.
-                if control.GSEPairInit then control:Release() end
-                control.GSEPairInit = init
-                control:ClearAllPoints()
-                if not right then
-                    -- The middle half: a quarter of the row in from each side.
-                    local quarter = (frame:GetWidth() or 0) / 4
-                    if quarter <= 0 then quarter = CENTRE_COLUMN_HALF end
-                    control:SetPoint("TOPLEFT", frame, "TOP", -quarter - CENTRE_COLUMN_NUDGE, 0)
-                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM", quarter - CENTRE_COLUMN_NUDGE, 0)
-                elseif i == 1 then
-                    control:SetPoint("TOPLEFT", frame, "TOPLEFT")
-                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOM")
-                else
-                    control:SetPoint("TOPLEFT", frame, "TOP")
-                    control:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
-                end
-                control:Init(init)
-                -- In half a row the stock places (label up to the centre - 85,
-                -- box at the centre - 80) leave no room: the box goes near the
-                -- half's right edge and the label runs up to it.
-                control.Checkbox:ClearAllPoints()
-                control.Checkbox:SetPoint("RIGHT", control, "RIGHT", -24, 0)
-                control.Text:ClearAllPoints()
-                control.Text:SetPoint("LEFT", control, "LEFT", control:GetIndent() + 37, 0)
-                control.Text:SetPoint("RIGHT", control.Checkbox, "LEFT", -8, 0)
-                control.Tooltip:ClearAllPoints()
-                control.Tooltip:SetPoint("TOPLEFT", control, "TOPLEFT")
-                control.Tooltip:SetPoint("BOTTOMRIGHT", control.Checkbox, "BOTTOMLEFT", -4, 0)
-                control:Show()
-            end
-        end
-    end
-    function row:Resetter(frame)
-        for _, control in ipairs(frame.GSEPair or {}) do
-            if control.GSEPairInit then
-                control:Release()
-                control.GSEPairInit = nil
-            end
-            control:Hide()
-        end
-    end
-    return row
-end
--- `centred`: setting variables whose checkbox stands alone in the centred
--- column instead of pairing.
-local function pairCheckboxRows(category, centred)
-    centred = centred or {}
-    local layout = category and SettingsPanel:GetLayout(category)
-    local initializers = layout and layout.GetInitializers and layout:GetInitializers()
-    if not initializers then return end
-    local function isCheckbox(init)
-        return init and init.GetTemplate and init:GetTemplate() == CHECKBOX_TEMPLATE
-    end
-    local function isCentred(init)
-        local setting = isCheckbox(init) and init.GetSetting and init:GetSetting()
-        return setting and centred[setting:GetVariable()] or false
-    end
-    local out, i = {}, 1
-    while i <= #initializers do
-        local init, nextInit = initializers[i], initializers[i + 1]
-        if isCentred(init) then
-            out[#out + 1] = pairedCheckboxRow(init, nil)
-            i = i + 1
-        elseif isCheckbox(init) and isCheckbox(nextInit) and not isCentred(nextInit) then
-            out[#out + 1] = pairedCheckboxRow(init, nextInit)
-            i = i + 2
-        else
-            out[#out + 1] = init
-            i = i + 1
-        end
-    end
-    wipe(initializers)
-    for _, init in ipairs(out) do initializers[#initializers + 1] = init end
 end
 
 local function createBlizzOptions(category, pluginOptions, colourOptions, generalOptions)
@@ -2296,12 +2177,16 @@ local function createBlizzOptions(category, pluginOptions, colourOptions, genera
     -- 7.1 - Tools & Diagnostics subcategory body (troubleshooting controls)
     --
     -- Populates the "Tools & Diagnostics" left-rail entry with the
-    -- following groups in order: Modifier Hold to Pause (Shift / Alt /
+    -- following groups in order: Action Button CVar, Modifier Hold to
+    -- Pause (Shift / Alt /
     -- Ctrl checkboxes), Spell Cache, Tracker / Keybind Diagnostics
     -- (sequence icon frame + successful cast frame toggles, master
     -- tracker enable, Linked checkbox, the various Lock checkboxes),
     -- and a per-sequence reset list (one row per loaded sequence).
     -- ---------------------------------------------------------------------
+    -- WoW's key-down setting: GSE works the same either way, so it sits
+    -- here rather than on the General page.
+    AddActionBarClickBehaviorOptions(troubleOptions)
     -- Troubleshooting
     do
         -- Modifier-held pause toggles. The reload prompt is required: the
@@ -3194,14 +3079,9 @@ function GSE:CreateConfigPanels()
             local layout = SettingsPanel:GetLayout(generalOptions)
             layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {["name"] = L["Action Bar Settings"], ["tooltip"] = L["Action Bar Settings"]}))
         end
-        -- Button Binding popup: the right-click menu runs on every client
-        -- (GSE.OpenContextMenu), so its switch is on every client too.
-        do
-            local setting = Settings.RegisterAddOnSetting(generalOptions, "actionbaroverpopup", "actionBarOverridePopup", GSEOptions, Settings.VarType.Boolean, L["Action Bar Override Popup"], true)
-            Settings.CreateCheckbox(generalOptions, setting, L["Show a sequence picker popup when right-clicking an empty actionbar button outside of combat."])
-        end
+        local moduleSwitch
         if GSE.ActionBarInstalled() then
-            local moduleSwitch = addActionBarModuleSwitch(generalOptions)
+            moduleSwitch = addActionBarModuleSwitch(generalOptions)
             -- The bar's one setting Edit Mode has no place for, greyed out
             -- under the switch until the module has loaded.
             do
@@ -3226,11 +3106,16 @@ function GSE:CreateConfigPanels()
                 end
             end
         end
+        AddActionBarKeyChangesOption(generalOptions, moduleSwitch)
         AddActionBarLabelOption(generalOptions)
         AddActionBarWatermarkOption(generalOptions)
         AddActionBarIconColourOption(generalOptions)
-        AddActionBarKeyChangesOption(generalOptions)
-        AddActionBarClickBehaviorOptions(generalOptions)
+        -- Last in the section. Button Binding popup: the right-click menu runs on every client
+        -- (GSE.OpenContextMenu), so its switch is on every client too.
+        do
+            local setting = Settings.RegisterAddOnSetting(generalOptions, "actionbaroverpopup", "actionBarOverridePopup", GSEOptions, Settings.VarType.Boolean, L["Action Bar Override Popup"], true)
+            Settings.CreateCheckbox(generalOptions, setting, L["Show a sequence picker popup when right-clicking an empty actionbar button outside of combat."])
+        end
         AddCompanionAppOptions(importExportOptions)
         AddImportExportOptions(importExportOptions)
         AddOutOfCombatQueueOptions(generalOptions)
@@ -3296,12 +3181,6 @@ function GSE:CreateConfigPanels()
         end
 
         createBlizzOptions(category, pluginOptions, nil, generalOptions)
-        -- The General page in two columns (pairCheckboxRows); the override
-        -- button options stacked in a centred column.
-        pairCheckboxRows(generalOptions, {
-            gseActionBarReportOverridesGeneral = true, actionBarLabel = true,
-            actionBarWatermark = true, actionBarKeepIconColour = true,
-        })
 
         -- Skyriding / Vehicle Keybinds subcategory is registered natively
         -- by GSE_QoL/QoL.lua via Settings.RegisterVerticalLayoutSubcategory
