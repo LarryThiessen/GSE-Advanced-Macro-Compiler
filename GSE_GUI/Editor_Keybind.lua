@@ -1418,7 +1418,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Button Bindings: the same panel shape as keybinds.
 -- ---------------------------------------------------------------------------
-local AO_COL_BUTTON, AO_COL_KEY, AO_COL_KEYS, AO_COL_STATE, AO_COL_SEQ = 175, 110, 110, 110, 180
+local AO_COL_BUTTON, AO_COL_KEY, AO_COL_KEYS, AO_COL_STATE, AO_COL_SEQ = 175, 110, 110, 150, 180
 local AO_ROW_WIDTH = KB_COL_ADD + AO_COL_BUTTON + AO_COL_KEY + AO_COL_KEYS + AO_COL_STATE + AO_COL_SEQ + KB_COL_REMOVE + 30
 
 -- Every action button this client can override, name -> name.  One scan per
@@ -1557,14 +1557,9 @@ local function actionButtonGroups(order)
     return groups
 end
 
--- LibActionButton state handling, unchanged from the old panel: the state
--- that means "no override state" depends on which bar addon owns the button.
-local function stateDefaultFor(buttonName)
-    if string.sub(buttonName, 1, 3) == "BT4" then return "0" end
-    if string.sub(buttonName, 1, 4) == "NDui_" then return "2" end
-    if string.sub(buttonName, 1, 4) == "CPB_" then return "" end
-    return "1"
-end
+-- LibActionButton state handling: the state that means "no override state"
+-- depends on which bar addon owns the button.
+local stateDefaultFor = GSE.LABDefaultState
 -- The classes whose bars change with a stance or form, which is what a
 -- button state is for: Warrior, Rogue, Druid.
 local STATE_CLASSES = {[1] = true, [4] = true, [11] = true}
@@ -1580,6 +1575,7 @@ local function stateColumnWanted(rows, buttonNames)
     for name in pairs(buttonNames) do
         local frame = _G[name]
         if type(frame) == "table" and frame.state_types then return true end
+        if GSE.ButtonPagesWithForms and GSE.ButtonPagesWithForms(name) then return true end
     end
     return false
 end
@@ -1753,17 +1749,80 @@ local function openWoWKeyBindingsFor(action)
     return true
 end
 
-local function stateListFor(buttonName)
+-- A LibActionButton button's states; Blizzard's main bar's and Dominos'
+-- stance, form and stealth pages (7-10); and the state a row is saved for
+-- (saved), so it is never lost from the list.
+local BONUS_PAGES = {"7", "8", "9", "10"}
+-- The form, stance or stealth that puts a class on each of those pages
+-- (6 + its bonus bar). Shadowform and a monk's stances leave the bar where it
+-- is, and Soar brings up the Skyriding bar (11), so none of them name a page.
+-- A spell this client doesn't have names nothing; the page shows its number.
+local FORM_PAGES = {
+    DRUID = {["7"] = 768, ["8"] = 33891, ["9"] = 5487, ["10"] = 24858},
+    ROGUE = {["7"] = 1784, ["8"] = 51713},
+}
+-- Warriors' stances page the bar up to Cataclysm, and on WoW Forever; from
+-- Mists of Pandaria on they leave it where it is.
+if GSE.GameMode < 5 or GSE.IsForever then
+    FORM_PAGES.WARRIOR = {["7"] = 2457, ["8"] = 71, ["9"] = 2458}
+end
+-- A button's states by name, "5 (Cat Form / Prowl)": from its bar's page
+-- driver (GSE.PageDriverNames), where the bar addon lets the player choose
+-- the pages; Blizzard's main bar and Dominos by the pages above. A state
+-- nothing names shows its number.
+local function stateNamer(buttonName)
+    local classfile = GetClassInfo and select(2, GetClassInfo(GSE.GetCurrentClassID()))
+    local driver = GSE.ButtonPageDriver and GSE.ButtonPageDriver(buttonName)
+    local names = driver and GSE.PageDriverNames(driver, classfile)
+    return function(k)
+        local name
+        if names then
+            name = names[k] and table.concat(names[k], " / ")
+        elseif GSE.ButtonPagesWithForms and GSE.ButtonPagesWithForms(buttonName) then
+            local spell = classfile and FORM_PAGES[classfile] and FORM_PAGES[classfile][k]
+            local info = spell and GSE.GetSpellInfo(spell)
+            name = info and info.name
+        end
+        return name and (k .. " (" .. name .. ")") or k
+    end
+end
+local function stateListFor(buttonName, saved)
     local frame = buttonName and _G[buttonName]
-    if not (frame and frame.state_types) then return nil end
     local states, order = {["Default"] = "Default"}, {"Default"}
-    local default = stateDefaultFor(buttonName)
-    for k in pairs(frame.state_types) do
-        if k ~= default and k ~= buttonName then
-            states[k] = k
+    local stateLabel = stateNamer(buttonName)
+    local function add(k)
+        if k ~= nil and not states[k] then
+            states[k] = stateLabel(k)
             table.insert(order, k)
         end
     end
+    if frame and frame.state_types then
+        local default = stateDefaultFor(buttonName)
+        for k in pairs(frame.state_types) do
+            if k ~= default and k ~= buttonName then add(k) end
+        end
+    elseif GSE.ButtonPagesWithForms and GSE.ButtonPagesWithForms(buttonName) then
+        -- A bar paging by its own driver (EllesmereUI): the pages it sends a
+        -- form or modifier to. Blizzard's main bar and Dominos: 7-10.
+        local pages = BONUS_PAGES
+        if frame.SetShowGridInsecure == nil and GSE.ButtonPageDriver(buttonName) then
+            pages = {}
+            for page = 1, 10 do
+                if GSE.DriverStateForPage(buttonName, page) then pages[#pages + 1] = tostring(page) end
+            end
+        end
+        for _, k in ipairs(pages) do add(k) end
+    end
+    add(saved)
+    if #order == 1 then return nil end
+    -- Default, then the pages by number, then any state named otherwise.
+    table.sort(order, function(a, b)
+        if a == "Default" or b == "Default" then return a == "Default" and b ~= "Default" end
+        local na, nb = tonumber(a), tonumber(b)
+        if na and nb then return na < nb end
+        if na or nb then return na ~= nil end
+        return tostring(a) < tostring(b)
+    end)
     return states, order
 end
 
@@ -2210,7 +2269,7 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         if state then state:SetWidth(AO_COL_STATE) end
         local function refreshStates()
             if not state then return end
-            local states, order = stateListFor(model.bind)
+            local states, order = stateListFor(model.bind, model.state)
             if states then
                 state:SetList(states, order)
                 state:SetValue(model.state or "Default")
@@ -2323,16 +2382,27 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
         button:SetCallback("OnLeave", function() GSE.ClearTooltip(editframe) end)
         local function choose(name)
             if name == model.bind then return end
-            -- One row per button: the row that had this button loses it
-            -- ("Pick a button") and keeps its sequence for whichever button it
-            -- gets next.
-            local other
+            -- One row per button and state (Save refuses two). A row that has
+            -- this button keeps it, and this row takes the first state no row
+            -- holds, Default first. Only when every state is taken, or the
+            -- button has none, does the Default row lose it ("Pick a button")
+            -- and keep its sequence for whichever button it gets next.
+            local held = {}
             for _, r in ipairs(rows) do
-                if r ~= model and r.bind == name then other = r end
+                if r ~= model and r.bind == name then held[rowKey(r)] = r end
             end
+            local _, order = stateListFor(name)
+            local state
+            for _, k in ipairs(order or {"Default"}) do
+                if not held[rowKey({bind = name, state = k})] then
+                    state = k
+                    break
+                end
+            end
+            local other = not state and held[name]
             if other then other.bind, other.state = nil, nil end
             model.bind = name
-            model.state = nil
+            model.state = state ~= "Default" and state or nil
             markDirty()
             if other then
                 redraw()

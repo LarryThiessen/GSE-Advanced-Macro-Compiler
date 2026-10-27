@@ -275,55 +275,290 @@ function GSE.SpecLoadoutOverrides(specKey, loadout, create)
         create)
 end
 
--- The keys in an override table that put something on buttonName (a key is
--- the button's name, or name-state for a state).
-local function overrideKeysFor(t, buttonName)
+--- The state a LibActionButton bar's button is in with no stance, form or
+--- stealth: the one a Default row (no State) is saved for. Bartender4 counts
+--- its states from 0, ConsolePort has none, NDui pages from 2, the rest from 1.
+function GSE.LABDefaultState(buttonName)
+    if string.sub(buttonName, 1, 3) == "BT4" then return "0" end
+    if string.sub(buttonName, 1, 4) == "CPB_" then return "" end
+    if string.sub(buttonName, 1, 5) == "NDui_" then return "2" end
+    return "1"
+end
+
+-- ── What a bar's pages are for ──────────────────────────────────────────────
+--
+-- A LibActionButton bar pages by a driver of the bar addon's ("[bonusbar:3] 9;
+-- [mod:shift] 5; 1"), and Bartender4, ElvUI and EllesmereUI let the player
+-- choose the pages: Cat Form can be page 5 on one bar and 7 on another. The
+-- Button Bindings name a state by the conditions its bar's driver gives it.
+-- Display only: what runs in a state is the state attribute's business.
+
+-- Each driver registered from now on. Bar addons set theirs up at login,
+-- after GSE has loaded.
+local pageDrivers = setmetatable({}, {__mode = "k"})
+if hooksecurefunc and RegisterStateDriver then
+    hooksecurefunc("RegisterStateDriver", function(frame, state, values)
+        if state == "page" and type(frame) == "table" and type(values) == "string" then
+            pageDrivers[frame] = values
+        end
+    end)
+end
+
+local function readPageDriver(frame)
+    if pageDrivers[frame] then return pageDrivers[frame] end
+    -- One set before GSE loaded: ElvUI keeps its bar's on the bar...
+    local page = frame.GetAttribute and frame:GetAttribute("page")
+    if type(page) == "string" and string.find(page, "[", 1, true) then return page end
+    -- ...and Bartender4 builds its bar's again on request.
+    if type(frame.GetStateOption) == "function" and type(frame.UpdateStates) == "function" then
+        if not frame:GetStateOption("enabled") then return nil end
+        if frame:GetStateOption("customEnabled") then return frame:GetStateOption("custom") end
+        local driver = frame:UpdateStates(true)
+        if type(driver) == "string" then return driver end
+    end
+end
+
+--- The page driver of the bar a button is on, or nil.
+function GSE.ButtonPageDriver(buttonName)
+    local frame = buttonName and _G[buttonName]
+    for _ = 1, 3 do
+        frame = type(frame) == "table" and frame.GetParent and frame:GetParent()
+        if not frame then return nil end
+        local ok, driver = pcall(readPageDriver, frame)
+        if ok and driver then return driver end
+    end
+end
+
+-- The form, stance or stealth each bonus bar is for, by class.
+local BONUS_BAR_SPELLS = {
+    DRUID = { 768, 33891, 5487, 24858 }, -- Cat, Tree of Life, Bear, Moonkin
+    ROGUE = { 1784, 51713 }, -- Stealth, Shadow Dance
+    WARRIOR = { 2457, 71, 2458 }, -- Battle, Defensive, Berserker
+    PRIEST = { 15473 }, -- Shadowform
+    MONK = { 103985, 115069, 115070 }, -- Tiger, Ox, Serpent
+    EVOKER = { 369536 }, -- Soar
+}
+local PROWL, STEALTH = 5215, 1784
+local NOT_A_FORM = {
+    overridebar = true, vehicleui = true, possessbar = true, shapeshift = true, petbattle = true,
+}
+
+local function spellName(spellID)
+    local info = spellID and GSE.GetSpellInfo(spellID)
+    return info and info.name
+end
+
+-- One [..] group of a driver as a name: "Bear Form", "Shift + Cat Form".
+-- Nil for a vehicle, Skyriding or a page switched by hand.
+local function describePageConditions(group, classfile)
+    local bonus, form, stealth, modifier, target
+    for raw in string.gmatch(group, "[^,]+") do
+        local test = string.lower(raw:match("^%s*(.-)%s*$"))
+        if NOT_A_FORM[test] or test:match("^bar:") then return nil end
+        local n = tonumber(test:match("^bonusbar:(%d+)$"))
+        if n then
+            if n < 1 or n > 4 then return nil end
+            bonus = n
+        end
+        n = tonumber(test:match("^form:(%d+)$") or test:match("^stance:(%d+)$"))
+        if n then form = n end
+        if test == "stealth" or test == "stealth:1" then stealth = true end
+        local key = test:match("^mod:(%a+)$") or test:match("^modifier:(%a+)$")
+        if key then modifier = _G[string.upper(key) .. "_KEY_TEXT"] or key end
+        if test == "help" or test == "harm" then target = test end
+    end
+
+    local name
+    if bonus and stealth and classfile == "DRUID" then
+        name = spellName(PROWL)
+    elseif bonus then
+        name = spellName(BONUS_BAR_SPELLS[classfile] and BONUS_BAR_SPELLS[classfile][bonus])
+    elseif form and GetShapeshiftFormInfo then
+        name = spellName(select(4, GetShapeshiftFormInfo(form)))
+    elseif stealth then
+        name = spellName(classfile == "DRUID" and PROWL or STEALTH)
+    end
+    local parts = {}
+    if modifier then parts[#parts + 1] = modifier end
+    if name then parts[#parts + 1] = name end
+    if target then parts[#parts + 1] = target == "help" and GSE.L["Friendly target"] or GSE.L["Hostile target"] end
+    if #parts == 0 then return nil end
+    return table.concat(parts, " + ")
+end
+
+--- What a driver puts on each page: { [page] = { name, ... } }, in its order,
+--- and the page it gives when no condition holds (the bar's own).
+function GSE.PageDriverNames(driver, classfile)
+    local names, default = {}, nil
+    for clause in string.gmatch(tostring(driver or "") .. ";", "([^;]*);") do
+        local page = clause:match("(%d+)%s*$")
+        if page and not string.find(clause, "[", 1, true) then default = default or page end
+        if page then
+            for group in string.gmatch(clause, "%[([^%]]*)%]") do
+                local name = describePageConditions(group, classfile)
+                if name then
+                    names[page] = names[page] or {}
+                    local seen = false
+                    for _, have in ipairs(names[page]) do
+                        if have == name then seen = true end
+                    end
+                    if not seen then table.insert(names[page], name) end
+                end
+            end
+        end
+    end
+    return names, default
+end
+
+--- The page a bar addon's own driver has a button's bar on now, when that is
+--- one it sends a form, stance, stealth or modifier to (1-10, not the bar's
+--- own): EllesmereUI's, whose pages the player chooses. Nil otherwise.
+function GSE.DriverStateForPage(buttonName, page)
+    local driver = GSE.ButtonPageDriver(buttonName)
+    if not (driver and page and page >= 1 and page <= 10) then return nil end
+    local _, classfile = UnitClass("player")
+    local names, default = GSE.PageDriverNames(driver, classfile)
+    local key = tostring(page)
+    if key ~= default and names[key] then return key end
+    return nil
+end
+
+--- The action-bar overrides to put on for a spec, from its own rows and the
+--- active talent loadout's: one per button and state, the loadout's replacing
+--- the spec's for the same button and state. Returns them in the order to
+--- apply -- every pinned state before any Default row -- and, per button, the
+--- states its pinned rows hold: { [button] = { [state] = true } }. A Default
+--- row takes every state of its button but those.
+function GSE.OverridesToApply(specRows, loadoutRows)
+    local byKey = {}
+    local function add(t)
+        for _, v in pairs(t or {}) do
+            if type(v) == "table" and type(v.Bind) == "string" and v.Bind ~= "" then
+                byKey[v.Bind .. (v.State ~= nil and ("\001" .. tostring(v.State)) or "")] = v
+            end
+        end
+    end
+    add(specRows)
+    add(loadoutRows)
+    local keys, pinned = {}, {}
+    for k, v in pairs(byKey) do
+        keys[#keys + 1] = k
+        if v.State ~= nil then
+            pinned[v.Bind] = pinned[v.Bind] or {}
+            pinned[v.Bind][tostring(v.State)] = true
+        end
+    end
+    table.sort(keys, function(a, b)
+        local pa, pb = byKey[a].State ~= nil, byKey[b].State ~= nil
+        if pa ~= pb then return pa end
+        return a < b
+    end)
+    local rows = {}
+    for i, k in ipairs(keys) do rows[i] = byKey[k] end
+    return rows, pinned
+end
+
+--- The sequence an overridden button runs now: on a LibActionButton bar, the
+--- one on the state it is in, as each form, stance or stealth can have its
+--- own; else the button's.
+function GSE.ButtonOverrideSequence(buttonName)
+    local byState = GSE.ButtonOverrideStates and GSE.ButtonOverrideStates[buttonName]
+    local button = byState and _G[buttonName]
+    if button and button.GetAttribute then
+        local st
+        if GSE.OverrideStateFor then st = GSE.OverrideStateFor(button) else st = button:GetAttribute("state") end
+        if st ~= nil and byState[tostring(st)] then return byState[tostring(st)] end
+    end
+    -- No row for this state: the Default row, where the button has one.
+    if GSE.ButtonOverrideDefaults and not GSE.ButtonOverrideDefaults[buttonName] then return nil end
+    return GSE.ButtonOverrides and GSE.ButtonOverrides[buttonName]
+end
+
+--- Whether an overridden button runs sequence in any of its states.
+function GSE.ButtonRunsSequence(buttonName, sequence)
+    if GSE.ButtonOverrides and GSE.ButtonOverrides[buttonName] == sequence then return true end
+    for _, seq in pairs(GSE.ButtonOverrideStates and GSE.ButtonOverrideStates[buttonName] or {}) do
+        if seq == sequence then return true end
+    end
+    return false
+end
+
+local function sameState(a, b)
+    if a == nil or b == nil then return a == b end
+    return tostring(a) == tostring(b)
+end
+
+-- The keys in an override table that put something on buttonName for state
+-- (nil: its Default row). A key is the button's name, or name-state for a
+-- state.
+local function overrideKeysFor(t, buttonName, state)
     local keys = {}
     for k, v in pairs(t or {}) do
-        if k == buttonName or (type(v) == "table" and v.Bind == buttonName) then keys[#keys + 1] = k end
+        local row = type(v) == "table" and v or nil
+        if ((row and row.Bind) or k) == buttonName and sameState(row and row.State, state) then
+            keys[#keys + 1] = k
+        end
     end
     return keys
 end
 
---- Which layer puts an override on buttonName for the current spec:
---- "loadout" (the active talent loadout's, applied last so it wins), "spec",
---- or nil.
-function GSE.OverrideLayerFor(buttonName)
+--- Which layer puts the override on buttonName that runs in state (nil: no
+--- stance, form or stealth) for the current spec: "loadout" (the active
+--- talent loadout's, applied last so it wins), "spec", or nil. A row pinned
+--- to the state runs there, else the button's Default row, so the second
+--- return is the state the row is saved for (nil: the Default row).
+function GSE.OverrideLayerFor(buttonName, state)
     local spec = GSE.CurrentSpecKey()
-    if #overrideKeysFor(GSE.SpecLoadoutOverrides(spec, GSE.ActiveBindingLoadout(), false), buttonName) > 0 then
-        return "loadout"
+    local layers = {
+        { "loadout", GSE.SpecLoadoutOverrides(spec, GSE.ActiveBindingLoadout(), false) },
+        { "spec", GSE.SpecOverrides(spec, false) },
+    }
+    local tries = state ~= nil and { tostring(state), false } or { false }
+    for _, try in ipairs(tries) do
+        local st = try or nil
+        for _, l in ipairs(layers) do
+            if #overrideKeysFor(l[2], buttonName, st) > 0 then return l[1], st end
+        end
     end
-    if #overrideKeysFor(GSE.SpecOverrides(spec, false), buttonName) > 0 then return "spec" end
     return nil
 end
 
---- Put a sequence on buttonName for the current spec. layer "loadout" keeps it
---- to the active talent loadout; anything else is the spec's, for every
---- loadout -- and then the active loadout's own entry for the button goes, or
---- it would go on hiding the change.
-function GSE.SetOverrideData(buttonName, sequenceId, layer)
+--- Put a sequence on buttonName for the current spec, in state (a stance,
+--- form or stealth; nil: the Default row). layer "loadout" keeps it to the
+--- active talent loadout; anything else is the spec's, for every loadout --
+--- and then the active loadout's own row for the button and state goes, or it
+--- would go on hiding the change.
+function GSE.SetOverrideData(buttonName, sequenceId, layer, state)
     local spec, loadout = GSE.CurrentSpecKey(), GSE.ActiveBindingLoadout()
-    local bind = { Bind = buttonName, Sequence = sequenceId }
+    if state ~= nil then state = tostring(state) end
+    local key = state and (buttonName .. "-" .. state) or buttonName
+    local bind = { Bind = buttonName, State = state, Sequence = sequenceId }
+    local function put(t)
+        for _, k in ipairs(overrideKeysFor(t, buttonName, state)) do t[k] = nil end
+        t[key] = bind
+    end
     if layer == "loadout" and loadout then
-        GSE.SpecLoadoutOverrides(spec, loadout, true)[buttonName] = bind
+        put(GSE.SpecLoadoutOverrides(spec, loadout, true))
         return "loadout"
     end
-    GSE.SpecOverrides(spec, true)[buttonName] = bind
+    put(GSE.SpecOverrides(spec, true))
     local own = GSE.SpecLoadoutOverrides(spec, loadout, false)
-    for _, k in ipairs(overrideKeysFor(own, buttonName)) do own[k] = nil end
+    for _, k in ipairs(overrideKeysFor(own, buttonName, state)) do own[k] = nil end
     return "spec"
 end
 
---- Take buttonName's override off the layer that applies it, and only that
---- one: clearing a loadout's lets the spec's show again, and clearing the
---- spec's leaves every loadout's alone. Returns the layer cleared.
-function GSE.ClearOverrideData(buttonName)
-    local layer = GSE.OverrideLayerFor(buttonName)
+--- Take the override that runs on buttonName in state (nil: no stance, form
+--- or stealth) off the layer that applies it, and only that row: clearing a
+--- loadout's lets the spec's show again, clearing the spec's leaves every
+--- loadout's alone, and other states' rows stay. Returns the layer cleared
+--- and the state the cleared row was saved for.
+function GSE.ClearOverrideData(buttonName, state)
+    local layer, st = GSE.OverrideLayerFor(buttonName, state)
     local spec = GSE.CurrentSpecKey()
     local t = layer == "loadout" and GSE.SpecLoadoutOverrides(spec, GSE.ActiveBindingLoadout(), false)
         or layer == "spec" and GSE.SpecOverrides(spec, false)
-    for _, k in ipairs(overrideKeysFor(t, buttonName)) do t[k] = nil end
-    return layer
+    for _, k in ipairs(overrideKeysFor(t, buttonName, st)) do t[k] = nil end
+    return layer, st
 end
 
 local function copy(t)

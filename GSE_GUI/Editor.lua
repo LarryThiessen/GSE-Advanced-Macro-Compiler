@@ -1265,31 +1265,6 @@ local function isInGameMacroAction(action)
     return type(action) == "table" and action.macro and isInGameMacroBody(GSE.UnEscapeString(action.macro))
 end
 
-
-local SPELL_NAME_ICON_FALLBACK_IDS = {
-    ["demon blades"] = { 203555 },
-    ["dream breath"] = { 355936, 355941, 382614 },
-    ["lifetreading"] = { 1217941 },
-    ["rapid fire"]   = { 257044 }, -- Marksmanship Hunter channel
-}
-
--- Shared with the button's icon (GSE.IsFormSpellCandidate, Storage.lua), so the
--- block and the button it fires skip the same lines.
-local isFormSpellCandidate = GSE.IsFormSpellCandidate
-
-local function isFormIconInfo(spellinfo)
-    if type(spellinfo) ~= "table" then return false end
-    return isFormSpellCandidate(spellinfo.spellID) or isFormSpellCandidate(spellinfo.name)
-end
-
-local function getFirstIconInfo(spellinfo, skipForms)
-    if not spellinfo then return nil end
-    if spellinfo.iconID and not (skipForms and isFormIconInfo(spellinfo)) then return spellinfo end
-    for _, candidate in ipairs(spellinfo) do
-        if candidate and candidate.iconID and not (skipForms and isFormIconInfo(candidate)) then return candidate end
-    end
-end
-
 local function isQuestionMarkIcon(icon)
     if GSE.isEmpty(icon) then return false end
     if tonumber(icon) == Statics.QuestionMarkIconID then return true end
@@ -1320,171 +1295,61 @@ local function isIconBearingAction(action)
         not GSE.isEmpty(action.item) or not GSE.isEmpty(action.toy)
 end
 
-local judgeCastable
 local function getManualActionIcon(action)
     if type(action) == "table" and action.Icon and not isQuestionMarkIcon(action.Icon) and not isAutomaticCategorisedActionIcon(action) then
-        -- A saved icon the player did not pick yields when it is a line's this
-        -- character can never cast (GSE.IsIconOfUncastableLine), as on the button.
-        if judgeCastable and not action.IconUserSelected and GSE.IsIconOfUncastableLine
-            and GSE.IsIconOfUncastableLine(GSE.UnEscapeString(action.macro or ""), action.Icon) then
-            return nil
-        end
         return action.Icon
     end
 end
 
-local function getItemIconInfo(candidate)
-    local icon = select(10, C_Item.GetItemInfo(candidate))
-    if icon then
-        return {
-            name = candidate,
-            iconID = icon,
-        }
-    end
-end
-
-local function getEquipmentSlotIconInfo(candidate)
-    local slot = tonumber(trimIconCandidate(candidate))
-    if not slot or slot < 1 or slot > 19 then return nil end
-
-    if GetInventoryItemTexture then
-        local ok, texture = pcall(GetInventoryItemTexture, "player", slot)
-        if ok and texture then
-            return {
-                name = "equipment slot " .. slot,
-                iconID = texture,
-            }
-        end
-    end
-
-    if GetInventoryItemID and C_Item and C_Item.GetItemIconByID then
-        local ok, itemID = pcall(GetInventoryItemID, "player", slot)
-        if ok and itemID then
-            local okIcon, icon = pcall(C_Item.GetItemIconByID, itemID)
-            if okIcon and icon then
-                return {
-                    name = "equipment slot " .. slot,
-                    iconID = icon,
-                }
-            end
-        end
-    end
-end
-
-local function getSpellNameFallbackIconInfo(candidate, skipForms)
-    local spellIDs = SPELL_NAME_ICON_FALLBACK_IDS[strlower(trimIconCandidate(candidate))]
-    if not spellIDs then return nil end
-
-    for _, spellID in ipairs(spellIDs) do
-        if not (skipForms and isFormSpellCandidate(spellID)) then
-            local spellInfo = GSE.GetSpellInfo(spellID)
-            if spellInfo and spellInfo.iconID and not (skipForms and isFormIconInfo(spellInfo)) then
-                return spellInfo
-            end
-        end
-    end
-end
-
-local function getSpellOrItemIconInfo(candidate, preferItem, skipForms)
-    candidate = GSE.GetMacroClauseTarget(candidate)
-    if candidate == "" then return nil end
-    if preferItem and tonumber(candidate) and tonumber(candidate) <= 19 then
-        return getEquipmentSlotIconInfo(candidate)
-    end
-    if skipForms and isFormSpellCandidate(candidate) then return nil end
-
-    if preferItem then
-        local itemInfo = getItemIconInfo(candidate)
-        if itemInfo then return itemInfo end
-    end
-
-    local spellInfo = GSE.GetSpellInfo(candidate)
-    if spellInfo and spellInfo.iconID and not (skipForms and isFormIconInfo(spellInfo)) then return spellInfo end
-    if tonumber(candidate) then
-        spellInfo = GSE.GetSpellInfo(tonumber(candidate))
-        if spellInfo and spellInfo.iconID and not (skipForms and isFormIconInfo(spellInfo)) then return spellInfo end
-    end
-    if GSE.GetSpellId then
-        local spellID = GSE.GetSpellId(candidate, Statics.TranslatorMode.ID, true)
-        if spellID and spellID ~= candidate and not (skipForms and isFormSpellCandidate(spellID)) then
-            spellInfo = GSE.GetSpellInfo(spellID)
-            if spellInfo and spellInfo.iconID and not (skipForms and isFormIconInfo(spellInfo)) then return spellInfo end
-        end
-    end
-
-    spellInfo = getSpellNameFallbackIconInfo(candidate, skipForms)
-    if spellInfo then return spellInfo end
-
-    return getItemIconInfo(candidate)
-end
-
-local function getKnownConditionalIconInfo(candidate, skipForms)
+-- The Select Icon menu's candidates from one macro line: every clause's
+-- spell, item or slot, and the spell a known: asks for.
+local function getKnownConditionalIconInfo(candidate)
     for spellID in tostring(candidate or ""):gmatch("%f[%w]known:(%d+)") do
-        local iconInfo = getSpellOrItemIconInfo(spellID, nil, skipForms)
+        local iconInfo = GSE.GetMacroTargetIconInfo(spellID)
         if iconInfo then return iconInfo end
     end
 end
 
-local function getFallbackCandidateIconInfo(candidate, preferItem, skipForms)
+local function getFallbackCandidateIconInfo(candidate, preferItem)
     local knownIconInfo
     for _, semicolonCandidate in ipairs(GSE.split(candidate or "", ";")) do
-        knownIconInfo = knownIconInfo or getKnownConditionalIconInfo(semicolonCandidate, skipForms)
+        knownIconInfo = knownIconInfo or getKnownConditionalIconInfo(semicolonCandidate)
         semicolonCandidate = GSE.GetMacroClauseTarget(semicolonCandidate)
         for _, commaCandidate in ipairs(GSE.split(semicolonCandidate, ",")) do
-            local iconInfo = getSpellOrItemIconInfo(commaCandidate, preferItem, skipForms)
+            local iconInfo = GSE.GetMacroTargetIconInfo(commaCandidate, preferItem)
             if iconInfo then return iconInfo end
         end
     end
     return knownIconInfo
 end
 
-local function getCastSequenceIconInfo(candidate, skipForms)
+local function getCastSequenceIconInfo(candidate)
     local knownIconInfo
     for _, semicolonCandidate in ipairs(GSE.split(candidate or "", ";")) do
-        knownIconInfo = knownIconInfo or getKnownConditionalIconInfo(semicolonCandidate, skipForms)
+        knownIconInfo = knownIconInfo or getKnownConditionalIconInfo(semicolonCandidate)
         for _, sequenceCandidate in ipairs(GSE.SplitCastSequence(semicolonCandidate)) do
             local _, _, etc = GSE.GetConditionalsFromString(sequenceCandidate)
-            local iconInfo = getFallbackCandidateIconInfo(etc, nil, skipForms)
+            local iconInfo = getFallbackCandidateIconInfo(etc)
             if iconInfo then return iconInfo end
         end
     end
     return knownIconInfo
 end
 
-local function getMacroLineResolvedIconInfo(line, skipForms)
-    local cmd, etc = string.match(line or "", "^%s*/(%w+)%s+([^\n]+)")
-    if not cmd or not etc then return nil end
-
-    cmd = strlower(cmd)
-    if not Statics.CastCmds[cmd] then return nil end
-    if cmd == "stopmacro" or cmd == "cancelaura" or cmd == "cancelform" or cmd == "petautocastoff" or cmd == "petautocaston" then return nil end
-
-    local resolved = GSE.SafeSecureCmdOptionParse and GSE.SafeSecureCmdOptionParse(etc, true)
-    resolved = trimIconCandidate(resolved)
-    if resolved == "" then return nil end
-
-    if cmd == "castsequence" then
-        return getCastSequenceIconInfo(resolved, skipForms)
-    end
-
-    local preferItem = cmd == "use" or cmd == "usetoy" or cmd == "toy"
-    return getFallbackCandidateIconInfo(resolved, preferItem, skipForms)
-end
-
-local function getMacroLineFallbackIconInfo(line, skipForms)
+local function getMacroLineFallbackIconInfo(line)
     local cmd, etc = string.match(line or "", "^%s*/(%w+)%s+([^\n]+)")
     if not cmd or not etc then return nil end
 
     cmd = strlower(cmd)
     if cmd == "castsequence" then
-        return getCastSequenceIconInfo(etc, skipForms)
+        return getCastSequenceIconInfo(etc)
     end
 
     if not Statics.CastCmds[cmd] then return nil end
     if cmd == "stopmacro" or cmd == "cancelaura" or cmd == "cancelform" or cmd == "petautocastoff" or cmd == "petautocaston" then return nil end
 
     local preferItem = cmd == "use" or cmd == "usetoy" or cmd == "toy"
-    local iconInfo = getFallbackCandidateIconInfo(etc, preferItem, skipForms)
+    local iconInfo = getFallbackCandidateIconInfo(etc, preferItem)
     if iconInfo then return iconInfo end
 
     local _, _, parsedEtc = GSE.GetConditionalsFromString("/" .. cmd .. " " .. etc)
@@ -1495,71 +1360,7 @@ local function getMacroLineFallbackIconInfo(line, skipForms)
     local resolved = GSE.SafeSecureCmdOptionParse and GSE.SafeSecureCmdOptionParse(parsedEtc, true)
     local candidate = resolved and trimIconCandidate(resolved) or GSE.GetMacroClauseTarget(parsedEtc)
 
-    return getFallbackCandidateIconInfo(candidate, preferItem, skipForms)
-end
-
-local function getMacroLineResolvedIconCandidate(line)
-    local cmd, etc = string.match(line or "", "^%s*/(%w+)%s+([^\n]+)")
-    if not cmd or not etc then return nil end
-
-    cmd = strlower(cmd)
-    if not Statics.CastCmds[cmd] then return nil end
-    if cmd == "stopmacro" or cmd == "cancelaura" or cmd == "cancelform" or cmd == "petautocastoff" or cmd == "petautocaston" then return nil end
-
-    local _, _, parsedEtc = GSE.GetConditionalsFromString("/" .. cmd .. " " .. etc)
-    if type(parsedEtc) ~= "string" or parsedEtc == "" or string.sub(parsedEtc, 1, 1) == "/" then
-        parsedEtc = etc
-    end
-
-    local resolved = GSE.SafeSecureCmdOptionParse and GSE.SafeSecureCmdOptionParse(parsedEtc, true)
-    return resolved and trimIconCandidate(resolved) or GSE.GetMacroClauseTarget(parsedEtc)
-end
-
-local function isMacroLineFormOrStance(line)
-    return isFormSpellCandidate(getMacroLineResolvedIconCandidate(line))
-end
-
--- A line this character can never cast (a known: that fails, a talent not
--- taken) is passed over like a form line (GSE.MacroLineCanCast, as the
--- button does) -- for a sequence of this character's own class only: every
--- spell of another class's sequence is one it does not know.
-judgeCastable = true
-local function getFirstMacroLineIconInfo(macro, skipForms)
-    for _, line in ipairs(GSE.SplitMeIntoLines(macro or "")) do
-        if not (skipForms and (isMacroLineFormOrStance(line)
-            or (judgeCastable and GSE.MacroLineCanCast and not GSE.MacroLineCanCast(line)))) then
-            local spellinfo = GSE.GetSpellsFromString(line, true)
-            local iconInfo = getMacroLineResolvedIconInfo(line, skipForms) or getFirstIconInfo(spellinfo, skipForms) or getMacroLineFallbackIconInfo(line, skipForms)
-            if iconInfo then return iconInfo end
-        end
-    end
-end
-
-local function getFirstMacroFormIconInfo(macro)
-    for _, line in ipairs(GSE.SplitMeIntoLines(macro or "")) do
-        local spellinfo = GSE.GetSpellsFromString(line, true)
-        local iconInfo = getFirstIconInfo(spellinfo) or getMacroLineFallbackIconInfo(line)
-        if iconInfo then
-            return (isFormIconInfo(iconInfo) or isMacroLineFormOrStance(line)) and iconInfo or nil
-        end
-    end
-end
-
-local function getOnlyMacroFormIconInfo(macro)
-    local formIconInfo
-
-    for _, line in ipairs(GSE.SplitMeIntoLines(macro or "")) do
-        local spellinfo = GSE.GetSpellsFromString(line, true)
-        local iconInfo = getFirstIconInfo(spellinfo) or getMacroLineFallbackIconInfo(line)
-        if iconInfo then
-            if not (isFormIconInfo(iconInfo) or isMacroLineFormOrStance(line)) then
-                return nil
-            end
-            formIconInfo = formIconInfo or iconInfo
-        end
-    end
-
-    return formIconInfo
+    return getFallbackCandidateIconInfo(candidate, preferItem)
 end
 
 local function iconValuesMatch(left, right)
@@ -1578,6 +1379,9 @@ local function getResolvedMacroBody(action)
     return macro
 end
 
+-- A saved icon nobody picked that is a form, stance or pet line's, where the
+-- block's lines now give another (GSE.GetMacroTextIconInfo ranks those last):
+-- the editor's icon fill wrote it under the old rule.
 local function shouldReplaceFormActionIcon(action)
     if type(action) ~= "table" or GSE.isEmpty(action.Icon) or isQuestionMarkIcon(action.Icon) then return false end
     if action.IconUserSelected then return false end
@@ -1586,12 +1390,12 @@ local function shouldReplaceFormActionIcon(action)
     local macro = getResolvedMacroBody(action)
     if not GSE.IsMacroTextBody(macro) then return false end
 
-    local formIconInfo = getFirstMacroFormIconInfo(macro)
-    if not formIconInfo then return false end
-
-    local replacementIconInfo = getFirstMacroLineIconInfo(macro, true)
-    return replacementIconInfo and replacementIconInfo.iconID and
-        not iconValuesMatch(replacementIconInfo.iconID, formIconInfo.iconID)
+    local best, candidates = GSE.GetMacroTextIconInfo(macro)
+    if not (best and best.iconID) or iconValuesMatch(best.iconID, action.Icon) then return false end
+    for _, candidate in ipairs(candidates) do
+        if candidate.rank >= 3 and iconValuesMatch(candidate.info.iconID, action.Icon) then return true end
+    end
+    return false
 end
 
 local function shouldUseCategorisedActionIcon(action)
@@ -1669,7 +1473,7 @@ local function getActionAutoIcon(action)
 
         local macro = getResolvedMacroBody(action)
         if GSE.IsMacroTextBody(macro) then
-            local spellstuff = getFirstMacroLineIconInfo(macro, true) or getOnlyMacroFormIconInfo(macro)
+            local spellstuff = GSE.GetMacroTextIconInfo(macro)
             return notQuestionMark(spellstuff and spellstuff.iconID)
         else
             local macindex = GetMacroIndexByName(macro)
@@ -2254,18 +2058,12 @@ function GSE.CreateIconControl(action, version, keyPath, sequence, frame)
     -- spell, item, toy, or macro content.
     local function refreshIcon()
         local iconID = Statics.QuestionMarkIconID
-        -- Castable is this character's question only for its own class's
-        -- sequences (getFirstMacroLineIconInfo).
-        local specID = sequence and sequence.MetaData and tonumber(sequence.MetaData.SpecID)
-        local classID = specID and specID > 0 and GSE.GetClassIDforSpec and GSE.GetClassIDforSpec(specID)
-        judgeCastable = not (classID and classID > 0 and classID ~= GSE.GetCurrentClassID())
         local manualIcon = getManualActionIcon(action)
         if manualIcon and not shouldReplaceFormActionIcon(action) and not shouldUseCategorisedActionIcon(action) then
             iconID = manualIcon
         else
             iconID = getActionAutoIcon(action) or iconID
         end
-        judgeCastable = true
         setIcon(iconID)
     end
 
@@ -2298,7 +2096,7 @@ function GSE.CreateIconControl(action, version, keyPath, sequence, frame)
                     end
                 )
             end
-            -- Back to the icon the block's lines give: the saved one and the
+            -- Back to the icon the block's lines give: the set icon and the
             -- pick both go.
             rootDescription:CreateButton("|T" .. Statics.ActionsIcons.DeleteX .. ":0|t " .. L["Reset"], function()
                 local stored = sequence.Versions[version].Actions[keyPath]

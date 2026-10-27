@@ -8,21 +8,18 @@ local whatsnewframe = CreateFrame("Frame", "GSEWhatsNewFrame", UIParent, frameTe
 whatsnewframe:SetSize(700, 500)
 whatsnewframe:Hide()
 
--- Popup configuration (strata, centre anchor, drag) is routed through
--- GSE.UI.MakePopup so every GSE popup behaves consistently. This file is
--- in the GSE/ addon which loads BEFORE GSE_GUI/NativeUI.lua — so GSE.UI
--- doesn't exist when this top-level code runs. Defer to first OnShow,
--- where GSE_GUI is guaranteed loaded. A configured flag keeps the call
--- idempotent (MakePopup is itself idempotent, but the flag avoids the
--- ~6 function-call overhead on every subsequent open).
-local configured = false
-whatsnewframe:HookScript("OnShow", function(self)
-    if configured then return end
-    configured = true
-    if GSE.UI and GSE.UI.MakePopup then
-        GSE.UI.MakePopup(self, {center = true, movable = true})
-    end
-end)
+-- Set up here, as GSE.UI.MakePopup would: GSE_GUI loads on demand, so at
+-- login MakePopup isn't there and a window left to it had no anchor and never
+-- showed.
+whatsnewframe:SetFrameStrata("TOOLTIP")
+whatsnewframe:SetToplevel(true)
+whatsnewframe:SetClampedToScreen(true)
+whatsnewframe:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+whatsnewframe:SetMovable(true)
+whatsnewframe:EnableMouse(true)
+whatsnewframe:RegisterForDrag("LeftButton")
+whatsnewframe:SetScript("OnDragStart", function(self) self:StartMoving() end)
+whatsnewframe:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
 
 if whatsnewframe.SetBackdrop then
     whatsnewframe:SetBackdrop(
@@ -58,8 +55,33 @@ local content = CreateFrame("Frame", nil, scroll)
 content:SetSize(620, 1)
 scroll:SetScrollChild(content)
 
-local label = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-label:SetPoint("TOPLEFT", 0, 0)
+-- The TL;DR, and its link in a box to copy from: WoW text can't be clicked.
+local WHATS_NEW_LINK = "https://gse.tools/help/keybinding-and-actionbar-overrides"
+local tldr = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+tldr:SetPoint("TOPLEFT", 0, 0)
+tldr:SetJustifyH("LEFT")
+tldr:SetJustifyV("TOP")
+tldr:SetWidth(620)
+
+local link = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+link:SetPoint("TOPLEFT", tldr, "BOTTOMLEFT", 6, -6)
+link:SetSize(440, 20)
+link:SetAutoFocus(false)
+link:SetText(WHATS_NEW_LINK)
+link:SetCursorPosition(0)
+-- Read-only: whatever is typed, the link stays; a click selects it to copy.
+link:SetScript("OnTextChanged", function(self, userInput)
+    if userInput then
+        self:SetText(WHATS_NEW_LINK)
+        self:HighlightText()
+    end
+end)
+link:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+link:SetScript("OnEditFocusLost", function(self) self:HighlightText(0, 0) end)
+link:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+local label = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+label:SetPoint("TOPLEFT", tldr, "BOTTOMLEFT", 0, -38)
 label:SetJustifyH("LEFT")
 label:SetJustifyV("TOP")
 label:SetWidth(620)
@@ -75,10 +97,12 @@ shownew:SetScript(
 )
 
 function GSE.ShowUpdateNotes()
+    tldr:SetText(L["WhatsNewTLDR"])
+    tldr:SetHeight(tldr:GetStringHeight())
     label:SetText(L["WhatsNew"] .. "\n\n")
     label:SetHeight(label:GetStringHeight())
     shownew:SetChecked(GSEOptions.shownew)
     shownew:SetPoint("TOPLEFT", label, "BOTTOMLEFT", -4, -12)
-    content:SetHeight(label:GetStringHeight() + shownew:GetHeight() + 24)
+    content:SetHeight(tldr:GetStringHeight() + 38 + label:GetStringHeight() + shownew:GetHeight() + 24)
     whatsnewframe:Show()
 end

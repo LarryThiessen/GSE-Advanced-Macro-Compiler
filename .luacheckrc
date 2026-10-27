@@ -377,6 +377,8 @@ globals = {
     "IsSpellKnown",
     "IsPlayerSpell",
     "IsSpellKnownOrOverridesKnown",
+    "RegisterStateDriver",
+    "GetShapeshiftFormInfo",
     "GetSpecializationInfoByID",
     "GetSpecializationRole",
     "GetSpellCooldown",
