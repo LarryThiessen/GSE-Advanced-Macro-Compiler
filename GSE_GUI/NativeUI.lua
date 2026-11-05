@@ -4296,7 +4296,7 @@ local function createDropdown()
                 return
             end
             if MenuUtil and MenuUtil.CreateContextMenu then
-                GSE.OpenContextMenu(
+                MenuUtil.CreateContextMenu(
                     button,
                     function(ownerRegion, rootDescription)
                         if label:GetText() and label:GetText() ~= "" then
