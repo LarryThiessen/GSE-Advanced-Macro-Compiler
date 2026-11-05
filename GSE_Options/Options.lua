@@ -1599,6 +1599,21 @@ local function AddActionBarIconColourOption(optionsCategory)
     end
 end
 
+-- Off by default: a press of a sequence shows on the action buttons holding
+-- the spell it fired. See showCastPress in GSE/API/Events.lua.
+local function AddActionBarCastPressOption(optionsCategory)
+    do
+        local function GetValue()
+            return GSEOptions.actionBarShowCastPress == true
+        end
+        local function SetValue(val)
+            GSEOptions.actionBarShowCastPress = val == true
+        end
+        local setting = Settings.RegisterProxySetting(optionsCategory, "actionBarShowCastPress", Settings.VarType.Boolean, L["Show Sequence Presses on Action Buttons"], false, GetValue, SetValue)
+        Settings.CreateCheckbox(optionsCategory, setting, L["Each press of a sequence shows as a press of the action bar button holding the spell it fired, as if you had pressed that spell's own key. Visual only."])
+    end
+end
+
 -- On by default: chat says when a key stops running a sequence on an action
 -- bar button. See GSE/API/OverrideKeys.lua. Under parent, beside the other
 -- report, but never greyed out by it: it watches the keys of any bar.
@@ -3117,6 +3132,7 @@ function GSE:CreateConfigPanels()
         AddActionBarLabelOption(generalOptions)
         AddActionBarWatermarkOption(generalOptions)
         AddActionBarIconColourOption(generalOptions)
+        AddActionBarCastPressOption(generalOptions)
         -- Last in the section. Button Binding popup: the right-click menu runs on every client,
         -- so its switch is on every client too.
         do

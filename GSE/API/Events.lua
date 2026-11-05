@@ -1168,6 +1168,69 @@ local function hookPressFlash(button)
     end)
 end
 
+-- A press of a sequence shows on the Blizzard action buttons that hold the
+-- spell that press fired, as if the spell's own key had been pressed. Off by
+-- default: GSEOptions.actionBarShowCastPress. Visual only -- the pushed art,
+-- shown and hidden again -- so it works in combat and changes nothing about
+-- the button. Every press shows, whether or not the spell then casts, as
+-- every press of a key does.
+-- shortcut: Blizzard's own bars only, add a bar addon's button names if asked.
+local CAST_PRESS_BARS = {
+    "ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton", "MultiBarRightButton",
+    "MultiBarLeftButton", "MultiBar5Button", "MultiBar6Button", "MultiBar7Button",
+}
+-- Whether the spell in a slot is the one pressed: the same spell, the one a
+-- talent replaced it with, or the same spell by name -- with spell ranks
+-- (Classic, Forever) the bar holds one rank's id and the sequence fires
+-- another's, and C_ActionBar.FindSpellActionButtons finds neither.
+local function slotHoldsSpell(slot, spellID, base, name)
+    local kind, held = GetActionInfo(slot)
+    if kind ~= "spell" or not held then return false end
+    if held == spellID or held == base then return true end
+    local info = name and GSE.GetSpellInfo(held)
+    return info ~= nil and info.name == name
+end
+-- Presses come faster than the art stays up: a later press keeps it up, and
+-- only the last one's timer takes it down.
+local pressShownUntil = setmetatable({}, {__mode = "k"})
+local function showCastPress(spellID, name)
+    if isSecretValue(spellID) or not (spellID or name) then return end
+    -- The spell as the game names it: a sequence's can carry its rank.
+    local info = GSE.GetSpellInfo(spellID or name)
+    spellID = spellID or (info and info.spellID)
+    name = info and info.name or name
+    local base = spellID and FindBaseSpellByID and FindBaseSpellByID(spellID)
+    for _, bar in ipairs(CAST_PRESS_BARS) do
+        for i = 1, 12 do
+            local button = _G[bar .. i]
+            local slot = button and button:IsVisible() and not button:GetAttribute("gse-button")
+                and getButtonEffectiveSlot(button)
+            local pushed = slot and slotHoldsSpell(slot, spellID, base, name) and button:GetPushedTexture()
+            if pushed then
+                pressShownUntil[button] = GetTime() + PRESS_FLASH_SECONDS
+                pushed:Show()
+                C_Timer.After(PRESS_FLASH_SECONDS, function()
+                    if GetTime() >= pressShownUntil[button] and button:GetButtonState() == "NORMAL" then
+                        pushed:Hide()
+                    end
+                end)
+            end
+        end
+    end
+end
+--- GSE.UpdateIcon (Storage.lua) found the spell of the step a sequence fires
+--- next; pressed is true when a press brought it there. That press fired the
+--- step found the time before, so that spell is the one shown as pressed.
+local pressNext = {}
+function GSE.SequenceStepShown(sequenceId, spellID, name, pressed)
+    local fired = pressNext[sequenceId]
+    pressNext[sequenceId] = (spellID or name) and { spellID, name } or nil
+    if not (pressed and fired) or GSEOptions.actionBarShowCastPress ~= true then return end
+    -- A value Midnight keeps secret in combat, or a button built some other
+    -- way: no press shown, never an error on a press.
+    pcall(showCastPress, fired[1], fired[2])
+end
+
 local function repaintGSEOverrideButton(button, defer)
     if not button or not button.GetAttribute then return end
 
