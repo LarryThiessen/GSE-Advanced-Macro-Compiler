@@ -11,9 +11,10 @@
 --
 -- Run: busted spec/castpress_spec.lua   /   lua5.1 spec/run51.lua
 describe("A sequence's press shown as a button press", function()
-  local GLOBALS = { "GSE", "GSEOptions", "GetActionInfo", "GetTime", "C_Timer", "FindBaseSpellByID",
+  local GLOBALS = { "GSE", "GSEOptions", "GetActionInfo", "GetTime", "C_Timer", "FindBaseSpellByID", "UnitIsDeadOrGhost",
+    "UnitExists", "UnitIsUnit", "C_Spell",
     "ActionButton1", "ActionButton2", "MultiBar5Button3" }
-  local saved, showCastPress, stepShown, timers, secret, now
+  local saved, showCastPress, stepShown, timers, secret, now, dead, target, onSelf
 
   local function button(slot, fields)
     local b = fields or {}
@@ -53,6 +54,15 @@ describe("A sequence's press shown as a button press", function()
       0.1)
     C_Timer = { After = function(delay, fn) timers[#timers + 1] = { due = now + delay, fn = fn } end }
     GetTime = function() return now end
+    UnitIsDeadOrGhost = function(unit) return unit == "player" and dead end
+    UnitExists = function(unit) return unit == "target" and target end
+    UnitIsUnit = function(a, b) return a == "target" and b == "player" and onSelf end
+    -- 100 only harms, 200 harms and helps (as a spell that heals a friend
+    -- and hurts an enemy does), 300 only helps.
+    C_Spell = {
+      IsSpellHarmful = function(spell) return spell == 100 or spell == 200 end,
+      IsSpellHelpful = function(spell) return spell == 200 or spell == 300 end,
+    }
     -- Slots 1 and 147 hold spell 100; slot 2 holds 200, the base of 201 and
     -- another rank of 529; slot 3 holds an item with a spell's number.
     local slots = { [1] = { "spell", 100 }, [147] = { "spell", 100 }, [2] = { "spell", 200 }, [3] = { "item", 100 } }
@@ -75,7 +85,7 @@ describe("A sequence's press shown as a button press", function()
   end)
 
   before_each(function()
-    timers, now = {}, 10
+    timers, now, dead, target, onSelf = {}, 10, false, true, false
     GSEOptions.actionBarShowCastPress = true
     ActionButton1, ActionButton2, MultiBar5Button3 = button(1), button(2), button(147)
   end)
@@ -151,6 +161,32 @@ describe("A sequence's press shown as a button press", function()
     showCastPress(secret)
     showCastPress(nil, nil)
     assert.are.equal(0, ActionButton1.shown + ActionButton2.shown + MultiBar5Button3.shown)
+  end)
+
+  it("shows nothing while the player is dead", function()
+    dead = true
+    showCastPress(100)
+    assert.are.equal(0, ActionButton1.shown + MultiBar5Button3.shown)
+  end)
+
+  it("shows nothing without a target", function()
+    target = false
+    showCastPress(100)
+    assert.are.equal(0, ActionButton1.shown + MultiBar5Button3.shown)
+  end)
+
+  it("shows nothing for a spell that only harms while the player targets themself", function()
+    onSelf = true
+    showCastPress(100)
+    assert.are.equal(0, ActionButton1.shown + MultiBar5Button3.shown)
+    showCastPress(200) -- harms and helps: it lands on the player
+    assert.are.equal(1, ActionButton2.shown)
+  end)
+
+  it("shows the press where the game keeps who the target is secret", function()
+    onSelf = secret
+    showCastPress(100)
+    assert.are.equal(1, ActionButton1.shown)
   end)
 
   it("shows a press on the spell of the step that press fired, not the next one", function()

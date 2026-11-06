@@ -1172,8 +1172,8 @@ end
 -- spell that press fired, as if the spell's own key had been pressed. Off by
 -- default: GSEOptions.actionBarShowCastPress. Visual only -- the pushed art,
 -- shown and hidden again -- so it works in combat and changes nothing about
--- the button. Every press shows, whether or not the spell then casts, as
--- every press of a key does.
+-- the button. With a target, every press shows, whether or not the spell
+-- then casts, as every press of a key does.
 -- shortcut: Blizzard's own bars only, add a bar addon's button names if asked.
 local CAST_PRESS_BARS = {
     "ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton", "MultiBarRightButton",
@@ -1195,10 +1195,20 @@ end
 local pressShownUntil = setmetatable({}, {__mode = "k"})
 local function showCastPress(spellID, name)
     if isSecretValue(spellID) or not (spellID or name) then return end
+    -- Only with a target, and alive: riding, eating or standing about with
+    -- nothing targeted, a press is not a cast and the bar stays still.
+    if not UnitExists("target") or UnitIsDeadOrGhost("player") then return end
     -- The spell as the game names it: a sequence's can carry its rank.
     local info = GSE.GetSpellInfo(spellID or name)
     spellID = spellID or (info and info.spellID)
     name = info and info.name or name
+    -- Targeting yourself, a spell that only harms has nothing to hit. Where
+    -- the game keeps the comparison secret, the press shows.
+    local onSelf = UnitIsUnit("target", "player")
+    if not isSecretValue(onSelf) and onSelf and C_Spell and C_Spell.IsSpellHarmful
+        and C_Spell.IsSpellHarmful(spellID or name) and not C_Spell.IsSpellHelpful(spellID or name) then
+        return
+    end
     local base = spellID and FindBaseSpellByID and FindBaseSpellByID(spellID)
     for _, bar in ipairs(CAST_PRESS_BARS) do
         for i = 1, 12 do
