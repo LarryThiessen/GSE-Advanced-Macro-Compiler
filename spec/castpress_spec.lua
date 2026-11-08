@@ -28,6 +28,8 @@ describe("A sequence's press shown as a button press", function()
     return b
   end
 
+  -- The game's globals go on _G itself: busted runs each spec file in its own
+  -- environment, and code loaded from Events.lua as text reads the real one.
   setup(function()
     saved = {}
     for _, name in ipairs(GLOBALS) do saved[name] = _G[name] end
@@ -52,32 +54,32 @@ describe("A sequence's press shown as a button press", function()
       function(value) return value == secret end,
       function(b) return b.slot end,
       0.1)
-    C_Timer = { After = function(delay, fn) timers[#timers + 1] = { due = now + delay, fn = fn } end }
-    GetTime = function() return now end
-    UnitIsDeadOrGhost = function(unit) return unit == "player" and dead end
-    UnitExists = function(unit) return unit == "target" and target end
-    UnitIsUnit = function(a, b) return a == "target" and b == "player" and onSelf end
+    _G.C_Timer = { After = function(delay, fn) timers[#timers + 1] = { due = now + delay, fn = fn } end }
+    _G.GetTime = function() return now end
+    _G.UnitIsDeadOrGhost = function(unit) return unit == "player" and dead end
+    _G.UnitExists = function(unit) return unit == "target" and target end
+    _G.UnitIsUnit = function(a, b) return a == "target" and b == "player" and onSelf end
     -- 100 only harms, 200 harms and helps (as a spell that heals a friend
     -- and hurts an enemy does), 300 only helps.
-    C_Spell = {
+    _G.C_Spell = {
       IsSpellHarmful = function(spell) return spell == 100 or spell == 200 end,
       IsSpellHelpful = function(spell) return spell == 200 or spell == 300 end,
     }
     -- Slots 1 and 147 hold spell 100; slot 2 holds 200, the base of 201 and
     -- another rank of 529; slot 3 holds an item with a spell's number.
     local slots = { [1] = { "spell", 100 }, [147] = { "spell", 100 }, [2] = { "spell", 200 }, [3] = { "item", 100 } }
-    GetActionInfo = function(slot)
+    _G.GetActionInfo = function(slot)
       local held = slots[slot]
       if held then return held[1], held[2] end
     end
     local names = { [100] = "Kill Command", [200] = "Lightning Bolt", [201] = "Tempest", [529] = "Lightning Bolt" }
     local byName = { ["Lightning Bolt(Rank 2)"] = 529 }
-    GSE = { GetSpellInfo = function(spell)
+    _G.GSE = { GetSpellInfo = function(spell)
       local id = byName[spell] or spell
       return names[id] and { name = names[id], spellID = id } or nil
     end }
-    GSEOptions = { actionBarShowCastPress = true }
-    FindBaseSpellByID = function(spellID) return spellID == 201 and 200 or spellID end
+    _G.GSEOptions = { actionBarShowCastPress = true }
+    _G.FindBaseSpellByID = function(spellID) return spellID == 201 and 200 or spellID end
   end)
 
   teardown(function()
@@ -87,7 +89,7 @@ describe("A sequence's press shown as a button press", function()
   before_each(function()
     timers, now, dead, target, onSelf = {}, 10, false, true, false
     GSEOptions.actionBarShowCastPress = true
-    ActionButton1, ActionButton2, MultiBar5Button3 = button(1), button(2), button(147)
+    _G.ActionButton1, _G.ActionButton2, _G.MultiBar5Button3 = button(1), button(2), button(147)
   end)
 
   -- Every timer due by then, as the game would run them.
