@@ -1194,23 +1194,37 @@ end
 local CAST_PRESS_COMMANDS = { cast = true, use = true, spell = true, castsequence = true }
 -- Whether a block's macro text casts the spell with its conditions as they read
 -- now: a /cast or /use line whose conditions pick a clause naming it, or a
--- /castsequence line whose picked clause lists it. A block with no cast line
--- is taken at its word. The press is read before its macro runs (the click
+-- /castsequence line whose picked clause is on it, before any /stopmacro that
+-- holds. A block with no cast line is taken at its word. The press is read before its macro runs (the click
 -- snippet calls UpdateIcon ahead of the action), so the cast it starts cannot
 -- change the answer.
 local function macroCastsSpell(macrotext, spellID, name)
     local castLines = 0
     for line in string.gmatch(macrotext .. "\n", "([^\n]*)\n") do
-        local cmd, etc = string.match(line, "^%s*/(%w+)%s+(.-)%s*$")
+        local cmd, etc = string.match(line, "^%s*/(%w+)%s*(.-)%s*$")
         cmd = cmd and string.lower(cmd)
+        -- A /stopmacro whose conditions hold: no line after it runs.
+        if cmd == "stopmacro" and (etc == "" or GSE.SafeSecureCmdOptionParse(etc) ~= nil) then
+            return false
+        end
         if cmd and CAST_PRESS_COMMANDS[cmd] then
             castLines = castLines + 1
             local picked = GSE.SafeSecureCmdOptionParse(etc)
             if picked ~= nil and not isSecretValue(picked) and type(picked) == "string" and picked ~= "" then
-                local entries = cmd == "castsequence" and GSE.SplitCastSequence(picked) or { picked }
+                local entries = { picked }
+                if cmd == "castsequence" then
+                    -- Only the step the sequence is on casts: past the
+                    -- spell (a "Spell, nil" until its reset), nothing does.
+                    -- WoW keeps the sequence by the text its parser picked.
+                    local step
+                    if QueryCastSequence then _, _, step = QueryCastSequence(picked) end
+                    entries = type(step) == "string" and { step } or GSE.SplitCastSequence(picked)
+                end
                 for _, entry in ipairs(entries) do
-                    local info = GSE.GetSpellInfo(GSE.GetMacroClauseTarget(entry))
-                    if info and ((spellID and info.spellID == spellID) or (name and info.name == name)) then
+                    local target = GSE.GetMacroClauseTarget(entry)
+                    local info = GSE.GetSpellInfo(target)
+                    if (info and ((spellID and info.spellID == spellID) or (name and info.name == name)))
+                        or (name and type(target) == "string" and string.lower(target) == string.lower(name)) then
                         return true
                     end
                 end

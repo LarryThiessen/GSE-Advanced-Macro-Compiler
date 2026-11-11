@@ -4,7 +4,8 @@
 -- shown button whose slot holds the spell -- the same id, the one a talent
 -- replaced, or the same spell by name where the bar holds another rank --
 -- never on a button a sequence is on, never for a spell the block's
--- conditions rule out at the press, and never an error on a value Midnight
+-- conditions rule out at the press (a /stopmacro that holds, a cast sequence
+-- on another step), and never an error on a value Midnight
 -- keeps secret.
 --
 -- Events.lua cannot be loaded here, so this reads the functions out of it as
@@ -13,7 +14,7 @@
 -- Run: busted spec/castpress_spec.lua   /   lua5.1 spec/run51.lua
 describe("A sequence's press shown as a button press", function()
   local GLOBALS = { "GSE", "GSEOptions", "GetActionInfo", "GetTime", "C_Timer", "FindBaseSpellByID", "UnitIsDeadOrGhost",
-    "UnitExists", "UnitIsUnit", "C_Spell",
+    "UnitExists", "UnitIsUnit", "C_Spell", "QueryCastSequence",
     "ActionButton1", "ActionButton2", "MultiBar5Button3" }
   local saved, showCastPress, stepShown, timers, secret, now, dead, target, onSelf, held
 
@@ -124,6 +125,7 @@ describe("A sequence's press shown as a button press", function()
 
   before_each(function()
     timers, now, dead, target, onSelf, held = {}, 10, false, true, false, {}
+    _G.QueryCastSequence = nil
     GSEOptions.actionBarShowCastPress = true
     _G.ActionButton1, _G.ActionButton2, _G.MultiBar5Button3 = button(1), button(2), button(147)
   end)
@@ -261,6 +263,32 @@ describe("A sequence's press shown as a button press", function()
     held.combat = true
     showCastPress(200, nil, seq)
     assert.are.equal(1, ActionButton2.shown)
+  end)
+
+  it("reads only the step a cast sequence is on", function()
+    local steps = { ["reset=combat Kill Command, nil"] = "kill command" }
+    _G.QueryCastSequence = function(sequence) return 1, nil, steps[sequence] end
+    local seq = "/castsequence [combat] reset=combat Kill Command, nil"
+    held.combat = true
+    showCastPress(100, nil, seq)
+    assert.are.equal(1, ActionButton1.shown)
+    steps["reset=combat Kill Command, nil"] = "nil" -- cast once: on its nil step until combat resets it
+    ActionButton1.shown = 0
+    showCastPress(100, nil, seq)
+    assert.are.equal(0, ActionButton1.shown)
+  end)
+
+  it("shows nothing past a /stopmacro whose conditions hold", function()
+    local block = "/stopmacro [dead]\n/cast Kill Command"
+    showCastPress(100, nil, block)
+    assert.are.equal(1, ActionButton1.shown)
+    held.dead = true
+    ActionButton1.shown = 0
+    showCastPress(100, nil, block)
+    assert.are.equal(0, ActionButton1.shown)
+    held.dead = nil
+    showCastPress(100, nil, "/stopmacro\n/cast Kill Command")
+    assert.are.equal(0, ActionButton1.shown)
   end)
 
   it("takes a block with no cast line at its word, and shows nothing for a secret pick", function()
