@@ -1190,10 +1190,39 @@ local function slotHoldsSpell(slot, spellID, base, name)
     local info = name and GSE.GetSpellInfo(held)
     return info ~= nil and info.name == name
 end
+-- The lines of a block that cast something.
+local CAST_PRESS_COMMANDS = { cast = true, use = true, spell = true, castsequence = true }
+-- Whether a block's macro text casts the spell with its conditions as they read
+-- now: a /cast or /use line whose conditions pick a clause naming it, or a
+-- /castsequence line whose picked clause lists it. A block with no cast line
+-- is taken at its word. The press is read before its macro runs (the click
+-- snippet calls UpdateIcon ahead of the action), so the cast it starts cannot
+-- change the answer.
+local function macroCastsSpell(macrotext, spellID, name)
+    local castLines = 0
+    for line in string.gmatch(macrotext .. "\n", "([^\n]*)\n") do
+        local cmd, etc = string.match(line, "^%s*/(%w+)%s+(.-)%s*$")
+        cmd = cmd and string.lower(cmd)
+        if cmd and CAST_PRESS_COMMANDS[cmd] then
+            castLines = castLines + 1
+            local picked = GSE.SafeSecureCmdOptionParse(etc)
+            if picked ~= nil and not isSecretValue(picked) and type(picked) == "string" and picked ~= "" then
+                local entries = cmd == "castsequence" and GSE.SplitCastSequence(picked) or { picked }
+                for _, entry in ipairs(entries) do
+                    local info = GSE.GetSpellInfo(GSE.GetMacroClauseTarget(entry))
+                    if info and ((spellID and info.spellID == spellID) or (name and info.name == name)) then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return castLines == 0
+end
 -- Presses come faster than the art stays up: a later press keeps it up, and
 -- only the last one's timer takes it down.
 local pressShownUntil = setmetatable({}, {__mode = "k"})
-local function showCastPress(spellID, name)
+local function showCastPress(spellID, name, macrotext)
     if isSecretValue(spellID) or not (spellID or name) then return end
     -- Only with a target, and alive: riding, eating or standing about with
     -- nothing targeted, a press is not a cast and the bar stays still.
@@ -1209,6 +1238,9 @@ local function showCastPress(spellID, name)
         and C_Spell.IsSpellHarmful(spellID or name) and not C_Spell.IsSpellHelpful(spellID or name) then
         return
     end
+    -- Conditions that rule the spell out ([mod:shift] with no Shift held, a
+    -- [combat] line out of combat): nothing cast, nothing shown.
+    if macrotext and not macroCastsSpell(macrotext, spellID, name) then return end
     local base = spellID and FindBaseSpellByID and FindBaseSpellByID(spellID)
     for _, bar in ipairs(CAST_PRESS_BARS) do
         for i = 1, 12 do
@@ -1229,16 +1261,17 @@ local function showCastPress(spellID, name)
     end
 end
 --- GSE.UpdateIcon (Storage.lua) found the spell of the step a sequence fires
---- next; pressed is true when a press brought it there. That press fired the
---- step found the time before, so that spell is the one shown as pressed.
+--- next, and that step's macro text; pressed is true when a press brought it
+--- there. That press fired the step found the time before, so that spell is
+--- the one shown as pressed.
 local pressNext = {}
-function GSE.SequenceStepShown(sequenceId, spellID, name, pressed)
+function GSE.SequenceStepShown(sequenceId, spellID, name, pressed, macrotext)
     local fired = pressNext[sequenceId]
-    pressNext[sequenceId] = (spellID or name) and { spellID, name } or nil
+    pressNext[sequenceId] = (spellID or name) and { spellID, name, macrotext } or nil
     if not (pressed and fired) or GSEOptions.actionBarShowCastPress ~= true then return end
     -- A value Midnight keeps secret in combat, or a button built some other
     -- way: no press shown, never an error on a press.
-    pcall(showCastPress, fired[1], fired[2])
+    pcall(showCastPress, fired[1], fired[2], fired[3])
 end
 
 local function repaintGSEOverrideButton(button, defer)
