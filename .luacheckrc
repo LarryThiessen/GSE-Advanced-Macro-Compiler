@@ -611,6 +611,7 @@ globals = {
     "SettingsPanel",
     "MinimalSliderWithSteppersMixin",
     "strtrim",
+    "strlenutf8",
     "C_EventUtils",
     "Dominos",
     "GameTooltip_SetTitle",
