@@ -303,6 +303,20 @@ function GSE.ActiveBindingLoadout()
     return tostring(key)
 end
 
+--- The current spec's saved talent loadouts, in the order WoW lists them:
+--- { { id = "123", name = "Raid" }, ... }, id as the loadout tables key it.
+--- None on a client without them.
+function GSE.BindingLoadouts()
+    local out = {}
+    if not (GSE.HasTalentLoadouts() and C_ClassTalents.GetConfigIDsBySpecID) then return out end
+    local ok, ids = pcall(C_ClassTalents.GetConfigIDsBySpecID, GSE.GetCurrentSpecID())
+    for _, id in ipairs(ok and ids or {}) do
+        local info = C_Traits and C_Traits.GetConfigInfo and C_Traits.GetConfigInfo(id)
+        out[#out + 1] = { id = tostring(id), name = (info and info.name) or tostring(id) }
+    end
+    return out
+end
+
 --- A talent loadout's action-bar overrides for a spec, always the character's
 --- own: { [buttonKey] = { Bind, State, Sequence } }.
 function GSE.SpecLoadoutOverrides(specKey, loadout, create)
@@ -459,6 +473,86 @@ function GSE.DriverStateForPage(buttonName, page)
     return nil
 end
 
+-- A LibActionButton button's states; Blizzard's main bar's and Dominos'
+-- stance, form and stealth pages (7-10); and the state a row is saved for
+-- (saved), so it is never lost from the list.
+local BONUS_PAGES = {"7", "8", "9", "10"}
+-- The form, stance or stealth that puts a class on each of those pages
+-- (6 + its bonus bar). Shadowform and a monk's stances leave the bar where it
+-- is, and Soar brings up the Skyriding bar (11), so none of them name a page.
+-- A spell this client doesn't have names nothing; the page shows its number.
+local FORM_PAGES = {
+    DRUID = {["7"] = 768, ["8"] = 33891, ["9"] = 5487, ["10"] = 24858},
+    ROGUE = {["7"] = 1784, ["8"] = 51713},
+}
+-- Warriors' stances page the bar up to Cataclysm, and on WoW Forever; from
+-- Mists of Pandaria on they leave it where it is.
+if GSE.GameMode < 5 or GSE.IsForever then
+    FORM_PAGES.WARRIOR = {["7"] = 2457, ["8"] = 71, ["9"] = 2458}
+end
+-- A button's states by name, "5 (Cat Form / Prowl)": from its bar's page
+-- driver (GSE.PageDriverNames), where the bar addon lets the player choose
+-- the pages; Blizzard's main bar and Dominos by the pages above. A state
+-- nothing names shows its number.
+local function stateNamer(buttonName)
+    local classfile = GetClassInfo and select(2, GetClassInfo(GSE.GetCurrentClassID()))
+    local driver = GSE.ButtonPageDriver and GSE.ButtonPageDriver(buttonName)
+    local names = driver and GSE.PageDriverNames(driver, classfile)
+    return function(k)
+        local name
+        if names then
+            name = names[k] and table.concat(names[k], " / ")
+        elseif GSE.ButtonPagesWithForms and GSE.ButtonPagesWithForms(buttonName) then
+            local spell = classfile and FORM_PAGES[classfile] and FORM_PAGES[classfile][k]
+            local info = spell and GSE.GetSpellInfo(spell)
+            name = info and info.name
+        end
+        return name and (k .. " (" .. name .. ")") or k
+    end
+end
+--- A button's states to put a sequence on: { [state] = label }, and the
+--- states in order, Default first -- or nil when it has only the one. The
+--- Button Bindings' State column and the action buttons' right-click menu.
+function GSE.OverrideStatesFor(buttonName, saved)
+    local frame = buttonName and _G[buttonName]
+    local states, order = {["Default"] = "Default"}, {"Default"}
+    local stateLabel = stateNamer(buttonName)
+    local function add(k)
+        if k ~= nil and not states[k] then
+            states[k] = stateLabel(k)
+            table.insert(order, k)
+        end
+    end
+    if frame and frame.state_types then
+        local default = GSE.LABDefaultState(buttonName)
+        for k in pairs(frame.state_types) do
+            if k ~= default and k ~= buttonName then add(k) end
+        end
+    elseif GSE.ButtonPagesWithForms and GSE.ButtonPagesWithForms(buttonName) then
+        -- A bar paging by its own driver (EllesmereUI): the pages it sends a
+        -- form or modifier to. Blizzard's main bar and Dominos: 7-10.
+        local pages = BONUS_PAGES
+        if frame.SetShowGridInsecure == nil and GSE.ButtonPageDriver(buttonName) then
+            pages = {}
+            for page = 1, 10 do
+                if GSE.DriverStateForPage(buttonName, page) then pages[#pages + 1] = tostring(page) end
+            end
+        end
+        for _, k in ipairs(pages) do add(k) end
+    end
+    add(saved)
+    if #order == 1 then return nil end
+    -- Default, then the pages by number, then any state named otherwise.
+    table.sort(order, function(a, b)
+        if a == "Default" or b == "Default" then return a == "Default" and b ~= "Default" end
+        local na, nb = tonumber(a), tonumber(b)
+        if na and nb then return na < nb end
+        if na or nb then return na ~= nil end
+        return tostring(a) < tostring(b)
+    end)
+    return states, order
+end
+
 --- The action-bar overrides to put on for a spec, from its own rows and the
 --- active talent loadout's: one per button and state, the loadout's replacing
 --- the spec's for the same button and state. Returns them in the order to
@@ -560,12 +654,13 @@ function GSE.OverrideLayerFor(buttonName, state)
 end
 
 --- Put a sequence on buttonName for the current spec, in state (a stance,
---- form or stealth; nil: the Default row). layer "loadout" keeps it to the
---- active talent loadout; anything else is the spec's, for every loadout --
---- and then the active loadout's own row for the button and state goes, or it
---- would go on hiding the change.
-function GSE.SetOverrideData(buttonName, sequenceId, layer, state)
-    local spec, loadout = GSE.CurrentSpecKey(), GSE.ActiveBindingLoadout()
+--- form or stealth; nil: the Default row). layer "loadout" keeps it to a
+--- talent loadout -- loadout, or the active one when that is nil; anything
+--- else is the spec's, for every loadout -- and then the active loadout's own
+--- row for the button and state goes, or it would go on hiding the change.
+function GSE.SetOverrideData(buttonName, sequenceId, layer, state, loadout)
+    local spec, active = GSE.CurrentSpecKey(), GSE.ActiveBindingLoadout()
+    loadout = GSE.HasTalentLoadouts() and loadout ~= nil and tostring(loadout) or active
     if state ~= nil then state = tostring(state) end
     local key = state and (buttonName .. "-" .. state) or buttonName
     local bind = { Bind = buttonName, State = state, Sequence = sequenceId }
@@ -578,7 +673,7 @@ function GSE.SetOverrideData(buttonName, sequenceId, layer, state)
         return "loadout"
     end
     put(GSE.SpecOverrides(spec, true))
-    local own = GSE.SpecLoadoutOverrides(spec, loadout, false)
+    local own = GSE.SpecLoadoutOverrides(spec, active, false)
     for _, k in ipairs(overrideKeysFor(own, buttonName, state)) do own[k] = nil end
     return "spec"
 end

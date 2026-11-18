@@ -2401,12 +2401,19 @@ end
 --- (GSE.SetOverrideData); nil changes the button where its override already
 --- comes from, so the change is the one that shows. Returns the layer written.
 --- The sequence goes on the state the button is in (GSE.OverrideStateFor):
---- put on the stealth bar, it runs on the stealth bar.
-function GSE.CreateActionBarOverride(buttonName, sequenceId, layer)
+--- put on the stealth bar, it runs on the stealth bar. The right-click menu
+--- names its own: state, one of GSE.OverrideStatesFor's ("Default": the
+--- Default row), and loadout, the talent loadout a "loadout" row is for
+--- (nil: the active one).
+function GSE.CreateActionBarOverride(buttonName, sequenceId, layer, state, loadout)
     if InCombatLockdown() then return end
-    local state = GSE.OverrideStateFor(_G[buttonName])
+    if state == nil then
+        state = GSE.OverrideStateFor(_G[buttonName])
+    elseif state == "Default" then
+        state = nil
+    end
     layer = layer or (GSE.OverrideLayerFor(buttonName, state) == "loadout" and "loadout" or "spec")
-    local written = GSE.SetOverrideData(buttonName, sequenceId, layer, state)
+    local written = GSE.SetOverrideData(buttonName, sequenceId, layer, state, loadout)
     GSE.ReloadOverrides()
     return written
 end

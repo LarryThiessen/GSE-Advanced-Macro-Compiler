@@ -2540,7 +2540,51 @@ do
         local layer = existingSequence and GSE.OverrideLayerFor
             and GSE.OverrideLayerFor(buttonName, GSE.OverrideStateFor and GSE.OverrideStateFor(self))
 
-        local function addSequenceButtons(parent, toLayer)
+        -- A sequence goes on a talent loadout (ALL: the spec's, for every
+        -- loadout) and on a state of the button (Default: every state no
+        -- other row holds). Each is picked in its own submenu, and the
+        -- sequence clicked in the list under them goes where they say. A
+        -- client without loadouts, and a button with only the one state,
+        -- leave that submenu out.
+        local loadouts = GSE.BindingLoadouts and GSE.BindingLoadouts() or {}
+        local states, stateOrder
+        if GSE.OverrideStatesFor then states, stateOrder = GSE.OverrideStatesFor(buttonName) end
+        -- Only the states something puts this button in: a form, stance or
+        -- stealth the class has, or a page its bar addon names. A page nothing
+        -- names (a shaman's 7-10) is no choice to offer.
+        local named = {}
+        for _, k in ipairs(stateOrder or {}) do
+            if k == "Default" or states[k] ~= k then named[#named + 1] = k end
+        end
+        if #named < 2 then states, stateOrder = nil, nil else stateOrder = named end
+        -- The picks the menu opens on: every loadout, and the state the button
+        -- is in now.
+        local toLoadout, toState
+        if states then
+            local now = GSE.OverrideStateFor and GSE.OverrideStateFor(self)
+            toState = "Default"
+            for _, k in ipairs(stateOrder) do
+                if now ~= nil and k == tostring(now) then toState = k end
+            end
+        end
+        local function stateLabel(k) return k == "Default" and L["Default"] or states[k] end
+
+        -- A submenu of picks, its row saying which is in: "Loadout: ALL".
+        local function addPicker(parent, title, current, choices)
+            local row = parent:CreateButton(title .. ": " .. current())
+            row:AddInitializer(function(frame)
+                if frame.fontString then frame.fontString:SetText(title .. ": " .. current()) end
+            end)
+            for _, choice in ipairs(choices) do
+                row:CreateRadio(choice.text, choice.isSelected, function()
+                    choice.select()
+                    return MenuResponse.Refresh
+                end)
+            end
+        end
+
+        local function addSequenceButtons(parent)
+            parent:CreateTitle(L["GSE Sequences"])
             for _, entry in ipairs(names) do
                 local iconText = classIconText
                 local specID = entry.specID
@@ -2557,8 +2601,14 @@ do
                         GameTooltip_SetTitle(tooltip, L["Sequence Disabled"])
                     end)
                 else
-                    parent:CreateButton(iconText .. entry.name,
-                        function() GSE.CreateActionBarOverride(buttonName, entryId, toLayer) end)
+                    parent:CreateButton(iconText .. entry.name, function()
+                        local written = GSE.CreateActionBarOverride(buttonName, entryId,
+                            toLoadout and "loadout" or "spec", toState, toLoadout and toLoadout.id)
+                        if written == "loadout" and toLoadout then
+                            GSE.Print(string.format(L["Changed for talent loadout %s only."], toLoadout.name),
+                                L["Button Bindings"])
+                        end
+                    end)
                 end
             end
         end
@@ -2580,12 +2630,34 @@ do
             else
                 rootDescription:CreateTitle(L["Assign GSE Sequence"])
             end
-            if not loadoutName then
-                addSequenceButtons(rootDescription, "spec")
-                return
+            if #loadouts > 0 then
+                local choices = { {
+                    text = L["ALL"],
+                    isSelected = function() return toLoadout == nil end,
+                    select = function() toLoadout = nil end,
+                } }
+                for _, loadout in ipairs(loadouts) do
+                    choices[#choices + 1] = {
+                        text = loadout.name,
+                        isSelected = function() return toLoadout == loadout end,
+                        select = function() toLoadout = loadout end,
+                    }
+                end
+                addPicker(rootDescription, L["Loadout"],
+                    function() return toLoadout and toLoadout.name or L["ALL"] end, choices)
             end
-            addSequenceButtons(rootDescription:CreateButton(L["All Talent Loadouts"]), "spec")
-            addSequenceButtons(rootDescription:CreateButton(string.format(L["%s only"], loadoutName)), "loadout")
+            if states then
+                local choices = {}
+                for _, k in ipairs(stateOrder) do
+                    choices[#choices + 1] = {
+                        text = stateLabel(k),
+                        isSelected = function() return toState == k end,
+                        select = function() toState = k end,
+                    }
+                end
+                addPicker(rootDescription, L["State"], function() return stateLabel(toState) end, choices)
+            end
+            addSequenceButtons(rootDescription)
         end)
     end
 
