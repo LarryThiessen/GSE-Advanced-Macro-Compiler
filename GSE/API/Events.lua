@@ -2906,8 +2906,6 @@ local function startup()
     local charKey = GSE.CharacterMacroBucketKey()
     -- Before anything reads a setting a profile carries (Profiles.lua).
     GSE.InstallProfileSettings()
-    -- WoW Forever: profiles 3.3.38 kept under the old key, before any is read.
-    GSE.FoldForeverProfiles()
     GSE.PerformOneOffEvents()
 
     if GSE.isEmpty(GSESpellCache) then
