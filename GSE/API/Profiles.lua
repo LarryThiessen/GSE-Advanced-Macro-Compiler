@@ -342,6 +342,10 @@ end
 
 local function readPageDriver(frame)
     if pageDrivers[frame] then return pageDrivers[frame] end
+    -- EllesmereUI registers its bars' through a RegisterStateDriver it took
+    -- before GSE loaded, which the hook above never sees. It keeps the
+    -- conditions on the bar, as they are now (false: a bar on one page).
+    if type(frame._eabPagingConds) == "string" then return frame._eabPagingConds end
     -- One set before GSE loaded: ElvUI keeps its bar's on the bar...
     local page = frame.GetAttribute and frame:GetAttribute("page")
     if type(page) == "string" and string.find(page, "[", 1, true) then return page end
@@ -384,9 +388,14 @@ local function spellName(spellID)
     return info and info.name
 end
 
+-- Whether bonus bar n comes up for a class on this client (set below, with
+-- the pages they come up on).
+local clientBonusBar
+
 -- One [..] group of a driver as a name: "Bear Form", "Shift + Cat Form".
--- Nil for a vehicle, Skyriding or a page switched by hand.
-local function describePageConditions(group, classfile)
+-- Nil for a vehicle, Skyriding or a page switched by hand -- and, with
+-- onlyClientBars, for a bonus bar the class has none of on this client.
+local function describePageConditions(group, classfile, onlyClientBars)
     local bonus, form, stealth, modifier, target
     for raw in string.gmatch(group, "[^,]+") do
         local test = string.lower(raw:match("^%s*(.-)%s*$"))
@@ -394,6 +403,7 @@ local function describePageConditions(group, classfile)
         local n = tonumber(test:match("^bonusbar:(%d+)$"))
         if n then
             if n < 1 or n > 4 then return nil end
+            if onlyClientBars and not clientBonusBar(classfile, n) then return nil end
             bonus = n
         end
         n = tonumber(test:match("^form:(%d+)$") or test:match("^stance:(%d+)$"))
@@ -424,7 +434,11 @@ end
 
 --- What a driver puts on each page: { [page] = { name, ... } }, in its order,
 --- and the page it gives when no condition holds (the bar's own).
-function GSE.PageDriverNames(driver, classfile)
+--- onlyClientBars: leave out a page the driver sends a bonus bar to that the
+--- class has none of on this client. EllesmereUI on WoW Forever sends all
+--- four for every class, and a form that brings up no bar is no State to
+--- choose (Moonkin Form and Shadowform there).
+function GSE.PageDriverNames(driver, classfile, onlyClientBars)
     local names, default = {}, nil
     for clause in string.gmatch(tostring(driver or "") .. ";", "([^;]*);") do
         -- DaylightUI tags a page with the form or page under it ("13:f1").
@@ -432,7 +446,7 @@ function GSE.PageDriverNames(driver, classfile)
         if page and not string.find(clause, "[", 1, true) then default = default or page end
         if page then
             for group in string.gmatch(clause, "%[([^%]]*)%]") do
-                local name = describePageConditions(group, classfile)
+                local name = describePageConditions(group, classfile, onlyClientBars)
                 if name then
                     names[page] = names[page] or {}
                     local seen = false
@@ -454,7 +468,7 @@ function GSE.DriverStateForPage(buttonName, page)
     local driver = GSE.ButtonPageDriver(buttonName)
     if not (driver and page and page >= 1 and page <= 10) then return nil end
     local _, classfile = UnitClass("player")
-    local names, default = GSE.PageDriverNames(driver, classfile)
+    local names, default = GSE.PageDriverNames(driver, classfile, true)
     local key = tostring(page)
     if key ~= default and names[key] then return key end
     return nil
@@ -504,6 +518,10 @@ local function alwaysStancePages()
     local classfile = GetClassInfo and select(2, GetClassInfo(GSE.GetCurrentClassID()))
     return classfile and ALWAYS_IN_STANCE[classfile] and FORM_PAGES[classfile] or nil
 end
+clientBonusBar = function(classfile, n)
+    local pages = classfile and FORM_PAGES[classfile]
+    return pages ~= nil and pages[tostring(6 + n)] ~= nil
+end
 -- A button's states by name, "Cat Form / Prowl", the page number left out
 -- (Larry, 2026-11-20: "show just Stealth, hide the page number"): from its bar's page
 -- driver (GSE.PageDriverNames), where the bar addon lets the player choose
@@ -517,7 +535,10 @@ local function stateNamer(buttonName)
     local frame = buttonName and _G[buttonName]
     local dominos = type(frame) == "table" and frame.SetShowGridInsecure ~= nil
     local driver = not dominos and GSE.ButtonPageDriver and GSE.ButtonPageDriver(buttonName)
-    local names = driver and GSE.PageDriverNames(driver, classfile)
+    -- A LibActionButton bar's states are its own, each named as its driver
+    -- has it; any other bar's are the pages a stance brings up here.
+    local lab = type(frame) == "table" and frame.state_types ~= nil
+    local names = driver and GSE.PageDriverNames(driver, classfile, not lab)
     return function(k)
         local name
         if names then
@@ -541,7 +562,7 @@ local function statePages(buttonName, frame)
     local driver = frame.SetShowGridInsecure == nil and GSE.ButtonPageDriver(buttonName)
     if not driver then return BONUS_PAGES end
     local _, classfile = UnitClass("player")
-    local names, default = GSE.PageDriverNames(driver, classfile)
+    local names, default = GSE.PageDriverNames(driver, classfile, true)
     local pages = {}
     for page = 1, 10 do
         local key = tostring(page)

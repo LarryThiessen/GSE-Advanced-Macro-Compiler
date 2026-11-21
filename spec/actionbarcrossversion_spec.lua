@@ -105,6 +105,7 @@ local function login(client, classfile)
     tostring = tostring, tonumber = tonumber, select = select, setmetatable = setmetatable, pcall = pcall,
     rawget = rawget, next = next } })
   env._G = env
+  env.TEST_CLIENT, env.TEST_CLASS = client, classfile
   -- hooksecurefunc as WoW has it: the global is replaced, so a caller holding
   -- the function from before (EllesmereUI) is not seen.
   env.hooksecurefunc = function(name, hook)
@@ -156,12 +157,46 @@ local function dominosBarOnBonusSlots(env)
   return newButton(env, "DominosActionButton109", { dominos = true, parent = {}, attrs = { ["action-base"] = 73 },
     turn = function(b) b.attrs.action = 73 end })
 end
--- EllesmereUI's main bar (EUI_ActionBars_Secure.lua): id 0, the slot in the
--- "action" attribute. It registers its paging through a RegisterStateDriver
--- it took before GSE loaded (EUI_ActionBars_Bars.lua:15), so GSE sees none.
-local function ellesmereMainBar(env)
-  return newButton(env, "EABButton1", { parent = {}, attrs = {},
-    turn = function(b, bonus) b.attrs.action = bonus > 0 and slotOnBonus(bonus) or 1 end })
+-- EllesmereUI's main-bar conditions (GetClassPagingConditions,
+-- EUI_ActionBars_Paging.lua): every bonus bar on WoW Forever, whatever the
+-- class; a druid's and a rogue's on Retail.
+local function ellesmereConditions(client, classfile)
+  local c = "[overridebar] 18; [vehicleui][possessbar] 16; [shapeshift] 17; "
+    .. "[bar:2] 2; [bar:3] 3; [bar:4] 4; [bar:5] 5; [bar:6] 6; "
+  if client.forever then
+    c = c .. "[bonusbar:1] 7; [bonusbar:2] 8; [bonusbar:3] 9; [bonusbar:4] 10; "
+  elseif classfile == "DRUID" then
+    c = c .. "[bonusbar:1,stealth] 7; [bonusbar:1] 7; [bonusbar:3] 9; [bonusbar:4] 10; "
+  elseif classfile == "ROGUE" then
+    c = c .. "[bonusbar:1] 7; "
+  end
+  return c .. "[bonusbar:5] 11; 1"
+end
+-- The page a driver gives with this bonus bar up (out of stealth, no
+-- modifier, on page 1).
+local function drivenPage(conditions, bonus)
+  for clause in (conditions .. ";"):gmatch("([^;]*);") do
+    local n, page = clause:match("^%s*%[bonusbar:(%d)%]%s*(%d+)%s*$")
+    if n and tonumber(n) == bonus then return tonumber(page) end
+    if not clause:find("[", 1, true) then return tonumber(clause:match("%d+")) end
+  end
+  return 1
+end
+-- EllesmereUI's main bar (EUI_ActionBars_Secure.lua, EUI_ActionBars_Bars.lua):
+-- id 0, the slot in the "action" attribute, rewritten as the bar's driver
+-- turns the page. The driver is registered through a RegisterStateDriver
+-- EllesmereUI took before GSE loaded (EUI_ActionBars_Bars.lua:15), which
+-- GSE's hook never sees; the conditions are kept on the bar
+-- (_eabPagingConds: false for a bar on one page). conditions: the bar's,
+-- where they are not the class's own.
+local function ellesmereMainBar(env, conditions)
+  if conditions == nil then conditions = ellesmereConditions(env.TEST_CLIENT, env.TEST_CLASS) end
+  local bar = { _eabPagingConds = conditions }
+  return newButton(env, "EABButton1", { parent = bar, attrs = {},
+    turn = function(b, bonus)
+      local page = type(bar._eabPagingConds) == "string" and drivenPage(bar._eabPagingConds, bonus) or 1
+      b.attrs.action = 1 + (page - 1) * 12
+    end })
 end
 -- DaylightUI's first bar (Buttons.lua): id 0, the slot in the "action"
 -- attribute. Its driver is set up before GSE loads; unseen, its stances are
@@ -282,8 +317,10 @@ describe("Stance bars on every client and bar addon", function()
         it(classfile .. ": a press and what GSE shows agree, on every bar, in every stance", function()
           -- What turns to a stance bar: the Default row stays off it there.
           local turning = { blizzardMainBar, dominosMainBar, daylightMainBar, driverPagedBar }
+          -- EllesmereUI's bar too, on the clients it runs on.
+          if client.forever or client.name == "Retail" then turning[#turning + 1] = ellesmereMainBar end
           -- What does not: the Default row runs whatever the stance.
-          local still = { blizzardBar2, dominosBarOnBonusSlots, ellesmereMainBar }
+          local still = { blizzardBar2, dominosBarOnBonusSlots }
           local stances = { 0 }
           for _, bonus in ipairs(bonuses) do stances[#stances + 1] = bonus end
           for _, bonus in ipairs(stances) do
@@ -335,6 +372,79 @@ describe("Stance bars on every client and bar addon", function()
       end)
     end)
   end
+
+  -- EllesmereUI's stance bars follow the rule the others do (Larry,
+  -- 2026-11-21): GSE reads the conditions EllesmereUI keeps on the bar.
+  describe("EllesmereUI's own paging", function()
+    local forever, retail = CLIENTS[4], CLIENTS[5]
+
+    it("is seen, though registered where GSE's hook is not, and as it is now", function()
+      local env = login(forever, "DRUID")
+      local b = ellesmereMainBar(env)
+      assert.are.equal(ellesmereConditions(forever, "DRUID"), env.GSE.ButtonPageDriver("EABButton1"))
+      -- The player changes the bar's paging in EllesmereUI's options.
+      b:GetParent()._eabPagingConds = "[bonusbar:1] 5; 1"
+      assert.are.equal("[bonusbar:1] 5; 1", env.GSE.ButtonPageDriver("EABButton1"))
+    end)
+
+    it("names a State for each stance bar the class has on the client, and no other", function()
+      local env = login(forever, "DRUID")
+      local states = env.GSE.OverrideStatesFor(ellesmereMainBar(env):GetName())
+      assert.are.equal("Cat Form", states["7"])
+      assert.are.equal("Bear Form", states["9"])
+      assert.is_nil(states["8"], "Tree of Life: no bar on WoW Forever")
+      assert.is_nil(states["10"], "Moonkin Form: no bar on WoW Forever, though EllesmereUI sends bonus bar 4 to page 10")
+      env = login(forever, "WARRIOR")
+      states = env.GSE.OverrideStatesFor(ellesmereMainBar(env):GetName())
+      assert.are.same({ "Battle Stance", "Defensive Stance", "Berserker Stance" }, { states["7"], states["8"], states["9"] })
+      env = login(forever, "PRIEST")
+      assert.is_nil(env.GSE.OverrideStatesFor(ellesmereMainBar(env):GetName()), "Shadowform: no bar on WoW Forever")
+      env = login(retail, "DRUID")
+      states = env.GSE.OverrideStatesFor(ellesmereMainBar(env):GetName())
+      assert.are.same({ "Cat Form", "Bear Form", "Moonkin Form" }, { states["7"], states["9"], states["10"] })
+      env = login(retail, "WARRIOR")
+      assert.is_nil(env.GSE.OverrideStatesFor(ellesmereMainBar(env):GetName()), "stances turn no bar on Retail")
+    end)
+
+    it("follows a form the player put on a page of their own", function()
+      local env = login(forever, "DRUID")
+      local b = ellesmereMainBar(env, "[bonusbar:1] 5; [bonusbar:3] 9; 1")
+      assert.are.equal("Cat Form", env.GSE.OverrideStatesFor("EABButton1")["5"])
+      assert.is_true(env.GSE.ButtonStancePages("EABButton1")[5])
+      local shown, pressed = press(env, b, 1, { default = true })
+      assert.is_nil(shown, "Cat Form's page is its own")
+      assert.is_nil(pressed)
+      shown, pressed = press(env, b, 1, { default = true, pinned = { 5 } })
+      assert.are.equal("PINNED5", shown)
+      assert.are.equal(shown, pressed)
+      shown, pressed = press(env, b, 0, { default = true, pinned = { 5 } })
+      assert.are.equal("DEFAULT", shown)
+      assert.are.equal(shown, pressed)
+    end)
+
+    it("leaves a LibActionButton bar's states named as its driver has them", function()
+      -- Bartender4 on WoW Forever: the state is the bar's own, whether or not
+      -- its form brings up a bar there.
+      local env = login(forever, "DRUID")
+      local bar = {}
+      env.RegisterStateDriver(bar, "page", "[bonusbar:1] 7; [bonusbar:4] 10; 0")
+      newButton(env, "BT4Button1", { parent = bar, attrs = { state = "0" },
+        lab = { ["0"] = "action", ["7"] = "action", ["10"] = "action" } })
+      local states = env.GSE.OverrideStatesFor("BT4Button1")
+      assert.are.equal("Cat Form", states["7"])
+      assert.are.equal("Moonkin Form", states["10"])
+    end)
+
+    it("keeps the Default row on a bar EllesmereUI holds to one page", function()
+      local env = login(forever, "DRUID")
+      local b = ellesmereMainBar(env, false)
+      assert.is_nil(env.GSE.ButtonPageDriver("EABButton1"))
+      assert.are.same({}, env.GSE.ButtonStancePages("EABButton1"))
+      local shown, pressed = press(env, b, 1, { default = true })
+      assert.are.equal("DEFAULT", shown)
+      assert.are.equal(shown, pressed)
+    end)
+  end)
 
   -- The upgrade, for a class that is never out of a stance (a warrior on
   -- Classic Era here): its Default rows ran in every stance with no row of its
