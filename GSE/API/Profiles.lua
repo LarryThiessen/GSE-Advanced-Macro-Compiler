@@ -976,63 +976,13 @@ end
 --- loadout's lets the spec's show again, clearing the spec's leaves every
 --- loadout's alone, and other states' rows stay. Returns the layer cleared
 --- and the state the cleared row was saved for.
-function GSE.ClearOverrideData(buttonName, state, everyState)
+function GSE.ClearOverrideData(buttonName, state)
     local layer, st = GSE.OverrideLayerFor(buttonName, state)
     local spec = GSE.CurrentSpecKey()
     local t = layer == "loadout" and GSE.SpecLoadoutOverrides(spec, GSE.ActiveBindingLoadout(), false)
         or layer == "spec" and GSE.SpecOverrides(spec, false)
     for _, k in ipairs(overrideKeysFor(t, buttonName, st)) do t[k] = nil end
-    -- everyState: the button's rows for its other States go with it, from the
-    -- same layer (Larry, 2026-11-21: "When a Override is cleared the States
-    -- should also clear"). Cleared from the menu, a Stealth row stayed behind
-    -- and came up the next time the player stealthed.
-    if everyState and type(t) == "table" then
-        local rest = {}
-        for k, v in pairs(t) do
-            if ((type(v) == "table" and v.Bind) or k) == buttonName then rest[#rest + 1] = k end
-        end
-        for _, k in ipairs(rest) do t[k] = nil end
-    end
     return layer, st
-end
-
---- Move everything fromName has onto toName -- its Default row and each
---- State's -- and everything toName has onto fromName: the two buttons trade,
---- in the spec's rows and in the active talent loadout's, each row keeping
---- its State (Larry, 2026-11-21: "when a Override is moved states should come
---- with it"). Moved one state at a time, a button's Stealth row stayed behind
---- on the button its sequence had left. Returns "loadout" when the loadout's
---- rows changed, "spec" when only the spec's did, nil when neither button
---- had a row.
-function GSE.MoveOverrideData(fromName, toName)
-    local spec = GSE.CurrentSpecKey()
-    local written
-    for _, layer in ipairs({ "spec", "loadout" }) do
-        local t
-        if layer == "spec" then
-            t = GSE.SpecOverrides(spec, false)
-        else
-            t = GSE.SpecLoadoutOverrides(spec, GSE.ActiveBindingLoadout(), false)
-        end
-        local trade = {}
-        for k, v in pairs(type(t) == "table" and t or {}) do
-            local bind = (type(v) == "table" and v.Bind) or k
-            if bind == fromName then trade[#trade + 1] = { k, v, toName } end
-            if bind == toName then trade[#trade + 1] = { k, v, fromName } end
-        end
-        for _, row in ipairs(trade) do t[row[1]] = nil end
-        for _, row in ipairs(trade) do
-            local v, name = row[2], row[3]
-            if type(v) == "table" then
-                v.Bind = name
-                t[name .. (v.State ~= nil and ("-" .. tostring(v.State)) or "")] = v
-            else
-                t[name] = v
-            end
-        end
-        if #trade > 0 and (layer == "loadout" or not written) then written = layer end
-    end
-    return written
 end
 
 local function copy(t)

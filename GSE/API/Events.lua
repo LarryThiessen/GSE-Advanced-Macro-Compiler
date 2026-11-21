@@ -2656,27 +2656,45 @@ local function forgetMenuStates()
 end
 
 --- Clear the override the button shows now -- the active talent loadout's or
---- the spec's -- with every State it is ticked for: Clear Override leaves
---- none of the button's stance, form or stealth rows behind. The other layer
---- is left as it was (a loadout's override cleared, the spec's shows again).
+--- the spec's, for the state it is in -- and leave every other layer and
+--- state as it was: each State can hold a sequence of its own, and Clear
+--- Override takes the one it is cleared on (Larry, 2026-11-21: "it should
+--- have just cleared the Sequence from the state it was cleared on").
 function GSE.RemoveActionBarOverride(buttonName)
     if InCombatLockdown() then return end
-    GSE.ClearOverrideData(buttonName, GSE.OverrideStateFor(_G[buttonName]), true)
+    GSE.ClearOverrideData(buttonName, GSE.OverrideStateFor(_G[buttonName]))
     forgetMenuStates()
     GSE.ReloadOverrides()
 end
 
---- Move what fromName has onto toName, as dragging its sequence there does:
---- the sequence with every State it is ticked for, each on the same State of
---- toName. What toName had comes back to fromName the same way, so the two
---- swap (GSE.MoveOverrideData). Only a button showing a sequence now is
---- moved. Returns "loadout" when the active talent loadout's rows changed.
+--- Move the sequence fromName shows onto toName, as dragging it there does,
+--- each button in the state it is in: what fromName shows there moves, and
+--- lands on the state toName is in (on the stealth bar, it is on the stealth
+--- bar). A sequence saved for exactly that state of toName comes back to the
+--- row the moved one left, so the two swap; else that row is cleared. Each
+--- change goes where its row lives (the active loadout's, or the spec's).
+--- The sequences on the buttons' other States stay where they are (Larry,
+--- 2026-11-21: "the user move then likely doesnt want to move sequences on
+--- other state bars"). Returns "loadout" when either did.
 function GSE.MoveActionBarOverride(fromName, toName)
     if InCombatLockdown() or fromName == toName then return end
-    local from = _G[fromName]
+    local from, to = _G[fromName], _G[toName]
     if not (from and from:GetAttribute("gse-button")) then return end
-    if not GSE.ButtonOverrideSequence(fromName) then return end
-    local written = GSE.MoveOverrideData(fromName, toName)
+    local fromSeq = GSE.ButtonOverrideSequence(fromName)
+    if not fromSeq then return end
+    local fromLayer, fromState = GSE.OverrideLayerFor(fromName, GSE.OverrideStateFor(from))
+    local toState = GSE.OverrideStateFor(to)
+    local toLayer, toRowState = GSE.OverrideLayerFor(toName, toState)
+    local toSeq = toLayer and to:GetAttribute("gse-button") and toRowState == toState
+        and GSE.ButtonOverrideSequence(toName)
+    local written = GSE.SetOverrideData(toName, fromSeq, toLayer == "loadout" and "loadout" or "spec", toState)
+    if toSeq then
+        if GSE.SetOverrideData(fromName, toSeq, fromLayer == "loadout" and "loadout" or "spec", fromState) == "loadout" then
+            written = "loadout"
+        end
+    else
+        GSE.ClearOverrideData(fromName, fromState)
+    end
     forgetMenuStates()
     GSE.ReloadOverrides()
     return written
@@ -3255,6 +3273,18 @@ function GSE:MODIFIER_STATE_CHANGED()
     queueCurrentSpellIconRefresh(true)
 end
 
+-- A stance, form or stealth changes which line of a block fires, and so its
+-- icon (GSE.GetMacroTextIconInfo). The icon follows as it changes: left to
+-- the next spell event, a block showed its stealth line for a second or so
+-- out of stealth (Larry, 2026-11-21). Now, and once more a moment later:
+-- stealth is told before the form it comes with.
+local function stanceChanged()
+    queueCurrentSpellIconRefresh(true)
+    queueCurrentSpellIconRefresh()
+end
+GSE.UPDATE_STEALTH = stanceChanged
+GSE.UPDATE_SHAPESHIFT_FORM = stanceChanged
+
 function GSE.GetDeveloperDebugWarningReasons()
     local reasons = {}
     if GSEOptions then
@@ -3519,6 +3549,8 @@ GSE:RegisterEvent("GUILD_ROSTER_UPDATE")
 GSE:RegisterEvent("PLAYER_TARGET_CHANGED")
 GSE:RegisterEvent("CINEMATIC_STOP")
 GSE:RegisterEvent("MODIFIER_STATE_CHANGED")
+GSE:RegisterEvent("UPDATE_STEALTH")
+GSE:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 
 if GSE.GameMode > 8 then
     GSE:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
