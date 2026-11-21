@@ -338,6 +338,40 @@ if hooksecurefunc and RegisterStateDriver then
             pageDrivers[frame] = values
         end
     end)
+    -- And each one taken off again (DaylightUI, a bar 2-8 whose paging the
+    -- player removed): the bar is on one page from then on.
+    if UnregisterStateDriver then
+        hooksecurefunc("UnregisterStateDriver", function(frame, state)
+            if state == "page" and type(frame) == "table" then pageDrivers[frame] = nil end
+        end)
+    end
+end
+
+-- DaylightUI registers its bars' drivers while it loads, before GSE is there
+-- to see them, and keeps the rule nowhere on the bar. Its action bar module
+-- builds the rule on request, the same function it registers from: bar 1's
+-- (forms by [form:N] for a druid and a priest, Moonkin Form and Shadowform
+-- among them), and a bar 2-8's where the player set one. A rule registered
+-- since GSE loaded was seen above, and is the one in use. Nil for any other
+-- button, a bar on one page, and a DaylightUI that cannot be asked.
+local function daylightUIPageRule(buttonName)
+    local num = GSE.DaylightUIBar and GSE.DaylightUIBar(buttonName)
+    local DUI = num and _G.DaylightUI
+    local mod = type(DUI) == "table" and type(DUI.GetModule) == "function" and DUI:GetModule("ActionBars")
+    local ns = type(mod) == "table" and mod.enabled and mod.ns
+    local bars, paging = type(ns) == "table" and ns.Bars, type(ns) == "table" and ns.Paging
+    if type(bars) ~= "table" or type(paging) ~= "table" or type(bars.DEFS) ~= "table" then return nil end
+    for _, def in ipairs(bars.DEFS) do
+        if def.num == num then
+            local holder = type(bars.holders) == "table" and bars.holders[def.key]
+            if holder and pageDrivers[holder] then return pageDrivers[holder] end
+            local rule
+            if def.key == "main" then rule = paging.Rule() else rule = paging.BarRule(def) end
+            if type(rule) ~= "string" then return nil end
+            if holder then pageDrivers[holder] = rule end
+            return rule
+        end
+    end
 end
 
 local function readPageDriver(frame)
@@ -361,6 +395,8 @@ end
 --- The page driver of the bar a button is on, or nil.
 function GSE.ButtonPageDriver(buttonName)
     local frame = buttonName and _G[buttonName]
+    local asked, rule = pcall(daylightUIPageRule, buttonName)
+    if asked and rule then return rule end
     for _ = 1, 3 do
         frame = type(frame) == "table" and frame.GetParent and frame:GetParent()
         if not frame then return nil end
@@ -415,12 +451,15 @@ local function describePageConditions(group, classfile, onlyClientBars)
     end
 
     local name
-    if bonus and stealth and classfile == "DRUID" then
+    if (bonus or form) and stealth and classfile == "DRUID" then
         name = spellName(PROWL)
     elseif bonus then
         name = spellName(BONUS_BAR_SPELLS[classfile] and BONUS_BAR_SPELLS[classfile][bonus])
     elseif form and GetShapeshiftFormInfo then
         name = spellName(select(4, GetShapeshiftFormInfo(form)))
+        -- A priest's Shadowform is form 1 to a macro condition and has no
+        -- place on the stance bar to be named from (DaylightUI pages by it).
+        if not name and form == 1 and classfile == "PRIEST" then name = spellName(BONUS_BAR_SPELLS.PRIEST[1]) end
     elseif stealth then
         name = spellName(classfile == "DRUID" and PROWL or STEALTH)
     end

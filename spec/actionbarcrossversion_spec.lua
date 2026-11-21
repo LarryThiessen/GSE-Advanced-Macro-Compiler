@@ -101,6 +101,7 @@ local function login(client, classfile)
     GetClassInfo = function() return classfile, classfile end,
     UnitClass = function() return classfile, classfile end,
     RegisterStateDriver = function() end,
+    UnregisterStateDriver = function() end,
   }, { __index = { string = string, table = table, math = math, pairs = pairs, ipairs = ipairs, type = type,
     tostring = tostring, tonumber = tonumber, select = select, setmetatable = setmetatable, pcall = pcall,
     rawget = rawget, next = next } })
@@ -199,12 +200,65 @@ local function ellesmereMainBar(env, conditions)
     end })
 end
 -- DaylightUI's first bar (Buttons.lua): id 0, the slot in the "action"
--- attribute. Its driver is set up before GSE loads; unseen, its stances are
--- on Blizzard's pages (GSE.ButtonPagesWithForms).
+-- attribute. Its driver is set up before GSE loads; unseen, and with a
+-- DaylightUI that cannot be asked for it, its stances are on Blizzard's pages
+-- (GSE.ButtonPagesWithForms).
 local function daylightMainBar(env)
   return newButton(env, "DaylightUIBar1Button1", { parent = {}, attrs = {},
     turn = function(b, bonus) b.attrs.action = bonus > 0 and slotOnBonus(bonus) or 1 end })
 end
+-- DaylightUI as it is to another addon (WoW Forever only): the global, its
+-- action bar module with the module's own tables (Module.lua: ns = ns), the
+-- bars' holders, and the rule builders it registers its drivers from
+-- (Paging.Rule, Paging.BarRule). Its drivers are registered while it loads,
+-- before GSE is there: none goes through the hook. rules: { main = bar 1's
+-- rule, bar2 = a rule of the player's for bar 2 }. A druid's stance bar here:
+-- Bear 1, Aquatic 2, Cat 3, Travel 4, Moonkin 5, and the bar pages by form.
+local DRUID_FORMS = { [1] = 5487, [3] = 768, [5] = 24858 }
+local FORM_OF_BONUS = { [1] = 3, [3] = 1, [4] = 5 }
+local function daylightUI(env, rules)
+  local holders = { main = {}, bar2 = {} }
+  local ns = {
+    Bars = { holders = holders,
+      DEFS = { { key = "main", num = 1, page = 1 }, { key = "bar2", num = 2, page = 6 } } },
+    Paging = { Rule = function() return rules.main end, BarRule = function(def) return rules[def.key] end },
+  }
+  local mod = { enabled = true, ns = ns }
+  env.DaylightUI = { GetModule = function(_, name) return name == "ActionBars" and mod or nil end }
+  env.GetShapeshiftFormInfo = function(i)
+    local id = env.TEST_CLASS == "DRUID" and DRUID_FORMS[i]
+    if id then return nil, false, true, id end
+  end
+  -- The page a rule gives in a stance: stance is its bonus bar, and for a
+  -- druid or a priest the form DaylightUI counts instead.
+  local function page(rule, stance, own)
+    local form = env.TEST_CLASS == "DRUID" and FORM_OF_BONUS[stance] or (env.TEST_CLASS == "PRIEST" and stance or nil)
+    for clause in (rule .. ";"):gmatch("([^;]*);") do
+      local kind, n, to = clause:match("^%s*%[(%a+):(%d)%]%s*(%d+)")
+      if kind == "bonusbar" and tonumber(n) == stance and stance > 0 then return tonumber(to) end
+      if kind == "form" and tonumber(n) == form and stance > 0 then return tonumber(to) end
+    end
+    return own
+  end
+  local function button(name, key, own, index)
+    return newButton(env, name, { parent = holders[key], attrs = {},
+      turn = function(b, stance)
+        local to = rules[key] and page(rules[key], stance, own) or own
+        b.attrs.action = index + (to - 1) * 12
+      end })
+  end
+  return button("DaylightUIBar1Button1", "main", 1, 1), button("DaylightUIBar2Button1", "bar2", 6, 1), mod, holders
+end
+-- Bar 1's rule as Paging.Rule builds it (Paging.lua): every bonus bar by its
+-- number; a druid's forms by their place on the stance bar; a priest's
+-- Shadowform as form 1.
+local DAYLIGHT_HEAD = "[overridebar] 33; [vehicleui] 31; [possessbar] 31; [shapeshift] 32; "
+  .. "[bar:2] 2; [bar:3] 3; [bar:4] 4; [bar:5] 5; [bar:6] 6; "
+local DAYLIGHT_RULES = {
+  WARRIOR = DAYLIGHT_HEAD .. "[bonusbar:1] 7; [bonusbar:2] 8; [bonusbar:3] 9; [bonusbar:4] 10; [bonusbar:5] 11; 1",
+  DRUID = DAYLIGHT_HEAD .. "[form:3] 7; [form:1] 9; [form:5] 10; [bonusbar:5] 11; 1",
+  PRIEST = DAYLIGHT_HEAD .. "[form:1] 7; [bonusbar:5] 11; 1",
+}
 -- A bar whose page driver GSE does see, pages 7-10 for the bonus bars.
 local function driverPagedBar(env)
   local bar = {}
@@ -443,6 +497,128 @@ describe("Stance bars on every client and bar addon", function()
       local shown, pressed = press(env, b, 1, { default = true })
       assert.are.equal("DEFAULT", shown)
       assert.are.equal(shown, pressed)
+    end)
+  end)
+
+  -- DaylightUI's stance bars by the rule it pages with (Larry, 2026-11-21):
+  -- asked of its action bar module, since no driver of its is seen.
+  describe("DaylightUI's own paging", function()
+    local forever = CLIENTS[4]
+
+    it("is asked of DaylightUI, and a rule registered since is the one in use", function()
+      local env = login(forever, "WARRIOR")
+      local rules = { main = DAYLIGHT_RULES.WARRIOR }
+      local _, _, _, holders = daylightUI(env, rules)
+      assert.are.equal(DAYLIGHT_RULES.WARRIOR, env.GSE.ButtonPageDriver("DaylightUIBar1Button1"))
+      -- The player changes bar 1's paging: DaylightUI registers the new rule.
+      env.RegisterStateDriver(holders.main, "page", "[mod:shift] 2; 1")
+      assert.are.equal("[mod:shift] 2; 1", env.GSE.ButtonPageDriver("DaylightUIBar1Button1"))
+    end)
+
+    it("is asked by the button's name: one DaylightUI has parked off its bar is still on it", function()
+      local env = login(forever, "WARRIOR")
+      local b = daylightUI(env, { main = DAYLIGHT_RULES.WARRIOR })
+      b.shape.parent = {}
+      assert.are.equal(DAYLIGHT_RULES.WARRIOR, env.GSE.ButtonPageDriver("DaylightUIBar1Button1"))
+    end)
+
+    it("a druid's Moonkin Form is a bar of its own there, by form", function()
+      local env = login(forever, "DRUID")
+      local b = daylightUI(env, { main = DAYLIGHT_RULES.DRUID })
+      local states = env.GSE.OverrideStatesFor("DaylightUIBar1Button1")
+      assert.are.same({ "Cat Form", "Bear Form", "Moonkin Form" }, { states["7"], states["9"], states["10"] })
+      assert.is_nil(states["8"])
+      for _, stance in ipairs({ 1, 3, 4 }) do
+        local page = 6 + stance
+        local shown, pressed = press(env, b, stance, { default = true })
+        assert.is_nil(shown, "the form's bar is its own, page " .. page)
+        assert.is_nil(pressed)
+        shown, pressed = press(env, b, stance, { default = true, pinned = { page } })
+        assert.are.equal("PINNED" .. page, shown)
+        assert.are.equal(shown, pressed)
+      end
+      local shown, pressed = press(env, b, 0, { default = true, pinned = { 10 } })
+      assert.are.equal("DEFAULT", shown, "out of form")
+      assert.are.equal(shown, pressed)
+    end)
+
+    it("a priest's Shadowform is a State there, named though it has no place on the stance bar", function()
+      local env = login(forever, "PRIEST")
+      local b = daylightUI(env, { main = DAYLIGHT_RULES.PRIEST })
+      assert.are.equal("Shadowform", env.GSE.OverrideStatesFor("DaylightUIBar1Button1")["7"])
+      local shown, pressed = press(env, b, 1, { default = true })
+      assert.is_nil(shown)
+      assert.is_nil(pressed)
+      shown, pressed = press(env, b, 1, { default = true, pinned = { 7 } })
+      assert.are.equal("PINNED7", shown)
+      assert.are.equal(shown, pressed)
+    end)
+
+    it("a warrior's three stances, and no fourth", function()
+      local env = login(forever, "WARRIOR")
+      daylightUI(env, { main = DAYLIGHT_RULES.WARRIOR })
+      local states = env.GSE.OverrideStatesFor("DaylightUIBar1Button1")
+      assert.are.same({ "Battle Stance", "Defensive Stance", "Berserker Stance" }, { states["7"], states["8"], states["9"] })
+      assert.is_nil(states["10"])
+    end)
+
+    it("a prowling cat's own bar is Prowl", function()
+      local env = login(forever, "DRUID")
+      local spell = env.GSE.GetSpellInfo
+      env.GSE.GetSpellInfo = function(id) return id == 5215 and { name = "Prowl" } or spell(id) end
+      daylightUI(env, { main = "[form:3,stealth] 8; [form:3] 7; [form:1] 9; 1" })
+      local states = env.GSE.OverrideStatesFor("DaylightUIBar1Button1")
+      assert.are.equal("Prowl", states["8"])
+      assert.are.equal("Cat Form", states["7"])
+    end)
+
+    it("with Change with forms and stances off, the bar is one bar", function()
+      local env = login(forever, "WARRIOR")
+      local b = daylightUI(env, { main = DAYLIGHT_HEAD .. "[bonusbar:1] 1:f1; [bonusbar:2] 1:f2; [bonusbar:3] 1:f3; 1" })
+      assert.is_nil(env.GSE.OverrideStatesFor("DaylightUIBar1Button1"))
+      assert.are.same({}, env.GSE.ButtonStancePages("DaylightUIBar1Button1"))
+      local shown, pressed = press(env, b, 2, { default = true })
+      assert.are.equal("DEFAULT", shown)
+      assert.are.equal(shown, pressed)
+    end)
+
+    it("a bar 2-8 pages where the player set it to, until the paging is removed", function()
+      local env = login(forever, "WARRIOR")
+      local rules = { main = DAYLIGHT_RULES.WARRIOR }
+      local _, bar2, _, holders = daylightUI(env, rules)
+      assert.is_nil(env.GSE.ButtonPageDriver("DaylightUIBar2Button1"), "no paging set: the bar's own page")
+      local shown, pressed = press(env, bar2, 1, { default = true })
+      assert.are.equal("DEFAULT", shown)
+      assert.are.equal(shown, pressed)
+      -- Battle Stance sent to page 3 in DaylightUI's options.
+      rules.bar2 = "[bonusbar:1] 3; 6"
+      assert.are.equal("Battle Stance", env.GSE.OverrideStatesFor("DaylightUIBar2Button1")["3"])
+      shown, pressed = press(env, bar2, 1, { default = true })
+      assert.is_nil(shown, "Battle Stance's page is its own")
+      assert.is_nil(pressed)
+      shown, pressed = press(env, bar2, 2, { default = true })
+      assert.are.equal("DEFAULT", shown, "Defensive Stance leaves the bar where it is")
+      assert.are.equal(shown, pressed)
+      -- Removed again: DaylightUI takes the driver off.
+      rules.bar2 = nil
+      env.UnregisterStateDriver(holders.bar2, "page")
+      assert.is_nil(env.GSE.ButtonPageDriver("DaylightUIBar2Button1"))
+    end)
+
+    it("falls back to Blizzard's pages when DaylightUI cannot be asked", function()
+      for _, broken in ipairs({ "off", "no module", "errors" }) do
+        local env = login(forever, "WARRIOR")
+        local b, _, mod = daylightUI(env, { main = DAYLIGHT_RULES.WARRIOR })
+        if broken == "off" then mod.enabled = false end
+        if broken == "no module" then env.DaylightUI.GetModule = function() return nil end end
+        if broken == "errors" then mod.ns.Paging.Rule = function() error("not built yet") end end
+        assert.is_nil(env.GSE.ButtonPageDriver("DaylightUIBar1Button1"), broken)
+        assert.are.equal("Battle Stance", env.GSE.OverrideStatesFor("DaylightUIBar1Button1")["7"], broken)
+        b.shape.turn = function(btn, bonus) btn.attrs.action = bonus > 0 and slotOnBonus(bonus) or 1 end
+        local shown, pressed = press(env, b, 1, { default = true })
+        assert.is_nil(shown, broken)
+        assert.is_nil(pressed, broken)
+      end
     end)
   end)
 
