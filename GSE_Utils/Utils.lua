@@ -2082,6 +2082,9 @@ function GSE.PrintGnomeHelp()
     )
 end
 
+-- Larry's test branch only, never for Tim (Larry, 2026-11-20): /rl reloads the UI.
+SLASH_GSERL1 = "/rl"
+SlashCmdList["GSERL"] = function() ReloadUI() end
 SLASH_GSE1 = "/gse"
 SlashCmdList.GSE = function(input)
     GSE:GSSlash(input)
