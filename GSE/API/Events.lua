@@ -2330,6 +2330,12 @@ local function LoadOverrides(force)
                 loadoutRows = GSE_C["ActionBarBinds"]["LoadOuts"][GetSpec()][selected]
             end
         end
+        -- Once: a warrior's or monk's Default rows onto the stances they ran
+        -- in before (GSE.CopyDefaultRowsToStances, Profiles.lua).
+        local copied = GSE.CopyDefaultRowsToStances and GSE.CopyDefaultRowsToStances(GetSpec()) or 0
+        if copied > 0 then
+            GSE.Print(L["Each stance's bar now has its own sequences. Yours were put on every stance, where they ran before."])
+        end
         local rows, pinned = GSE.OverridesToApply(GSE.SpecOverrides(GetSpec(), false), loadoutRows)
         for _, v in ipairs(rows) do
             overrideActionButton(v, force, pinned[v.Bind])

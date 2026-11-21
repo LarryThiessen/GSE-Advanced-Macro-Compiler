@@ -117,9 +117,74 @@ describe("action button right-click menu: more than one state", function()
     assert.truthy(pick:find("if InCombatLockdown() then return end", 1, true), "not in combat")
     assert.truthy(pick:find("GSE.ClearOverrideData(buttonName, state)", 1, true), "unticked: off that state")
     assert.truthy(pick:find("if tostring(saved) == tostring(state) then", 1, true), "its own row only, never the Default's")
-    assert.truthy(pick:find("GSE.CreateActionBarOverride(buttonName, existingSequence,", 1, true), "ticked: on that state")
-    assert.truthy(pick:find("if k == nowState or #pickedStates() == 0 then return MenuResponse.CloseAll end", 1, true))
+    assert.truthy(pick:find("GSE.SetOverrideData(buttonName, existingSequence,", 1, true), "ticked: on that state")
+    -- Saved at once, put on the buttons when the menu has closed: the menu
+    -- stays open for the next tick (Larry, 2026-11-20).
+    assert.is_nil(pick:find("GSE.ReloadOverrides()", 1, true), "putting it on at once closes the menu")
+    assert.is_nil(pick:find("MenuResponse.CloseAll", 1, true))
+    local _, later = pick:gsub("applyWhenMenuCloses%(self%)", "")
+    assert.are.equal(2, later, "after a tick and after an untick")
     assert.truthy(menu:find("return choice.select() or MenuResponse.Refresh", 1, true))
+  end)
+
+  -- applyWhenMenuCloses / applyStateTicks as Utils.lua has them, with a menu
+  -- that can be open or closed and a clock that ticks when told to.
+  local function ticks()
+    local s = assert(menu:find("    local applyTicker\n", 1, true))
+    local e = assert(menu:find("    -- Shared handler:", s, true))
+    local code = menu:sub(s, e - 1) .. "\nreturn applyWhenMenuCloses, applyStateTicks"
+    local w = { applied = 0, combat = false, open = nil, tickers = 0 }
+    local env = {
+      GSE = { ReloadOverrides = function() w.applied = w.applied + 1 end },
+      InCombatLockdown = function() return w.combat end,
+      Menu = { GetManager = function() return { GetOpenMenu = function()
+        return w.open and { GetOwnerRegion = function() return w.open end } or nil
+      end } end },
+      C_Timer = { NewTicker = function(_, fn)
+        w.tickers = w.tickers + 1
+        w.tick = fn
+        return { Cancel = function() w.tick = nil end }
+      end },
+    }
+    local chunk
+    if loadstring then
+      chunk = assert(loadstring(code))
+      setfenv(chunk, env)
+    else
+      chunk = assert(load(code, "ticks", "t", env))
+    end
+    w.later, w.now = chunk()
+    return w
+  end
+
+  it("puts the ticks on the buttons once the button's menu has closed, and once", function()
+    local w, button = ticks(), {}
+    w.open = button
+    w.later(button)
+    w.later(button)
+    assert.are.equal(1, w.tickers, "one watch for any number of ticks")
+    w.tick()
+    assert.are.equal(0, w.applied, "the menu is still open")
+    w.open = {}
+    w.tick()
+    assert.are.equal(1, w.applied, "another button's menu is not this one's")
+    assert.is_nil(w.tick, "and the watch is over")
+  end)
+
+  it("holds the ticks through combat, and puts them on first when a menu is opened again", function()
+    local w, button = ticks(), {}
+    w.later(button)
+    w.combat = true
+    w.tick()
+    assert.are.equal(0, w.applied)
+    w.combat = false
+    assert.is_true(w.now())
+    assert.are.equal(1, w.applied)
+    assert.is_false(w.now(), "nothing waiting")
+    local handler = menu:sub(assert(menu:find("local function gseEmptyButtonHandler(self, mousebutton, down)", 1, true)))
+    local first = assert(handler:find("if applyStateTicks() then", 1, true))
+    local reads = assert(handler:find('local existingSequence = self:GetAttribute("gse-button")', 1, true))
+    assert.is_true(first < reads, "before the menu reads what is on the buttons")
   end)
 
   it("ticks states with boxes, keeps the last tick, and hands every ticked state on", function()

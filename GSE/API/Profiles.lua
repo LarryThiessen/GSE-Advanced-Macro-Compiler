@@ -469,9 +469,17 @@ local BONUS_PAGES = {"7", "8", "9", "10"}
 -- Skyriding bar (11), so it names no page.
 -- A spell this client doesn't have names nothing; the page shows its number.
 local FORM_PAGES = {
-    DRUID = {["7"] = 768, ["8"] = 33891, ["9"] = 5487, ["10"] = 24858},
-    ROGUE = {["7"] = 1784, ["8"] = 51713},
+    DRUID = {["7"] = 768, ["9"] = 5487},
+    ROGUE = {["7"] = 1784},
 }
+-- Only a form that brings up a bar on this client is a State to choose
+-- (Larry, 2026-11-20). Tree of Life has one in The Burning Crusade and none
+-- from Mists of Pandaria on (Wrath and Cataclysm are left as they were, named);
+-- Moonkin Form has one from The Burning Crusade on, but not on WoW Forever;
+-- Shadow Dance from Wrath of the Lich King to Mists of Pandaria.
+if GSE.GameMode < 5 then FORM_PAGES.DRUID["8"] = 33891 end
+if GSE.GameMode >= 2 and not GSE.IsForever then FORM_PAGES.DRUID["10"] = 24858 end
+if GSE.GameMode >= 3 and GSE.GameMode <= 5 then FORM_PAGES.ROGUE["8"] = 51713 end
 -- Warriors' stances page the bar up to Cataclysm, and on WoW Forever; from
 -- Mists of Pandaria on they leave it where it is.
 if GSE.GameMode < 5 or GSE.IsForever then
@@ -487,6 +495,14 @@ if GSE.GameMode >= 2 and GSE.GameMode <= 5 then
 end
 if GSE.GameMode == 5 then
     FORM_PAGES.MONK = {["7"] = 103985, ["8"] = 115069, ["9"] = 115070}
+end
+-- A warrior where stances turn the bar, and a monk, is never out of a stance:
+-- the bar they play on is always a stance bar. Their stance pages, or nil for
+-- every other class and client.
+local ALWAYS_IN_STANCE = { WARRIOR = true, MONK = true }
+local function alwaysStancePages()
+    local classfile = GetClassInfo and select(2, GetClassInfo(GSE.GetCurrentClassID()))
+    return classfile and ALWAYS_IN_STANCE[classfile] and FORM_PAGES[classfile] or nil
 end
 -- A button's states by name, "Cat Form / Prowl", the page number left out
 -- (Larry, 2026-11-20: "show just Stealth, hide the page number"): from its bar's page
@@ -623,7 +639,7 @@ function GSE.ButtonStancePages(buttonName)
         local page = tonumber(k)
         if page ~= home then pages[page] = true end
     end
-    return pages
+    return pages, home
 end
 
 --- The sequence an overridden button runs now: the row pinned to the state
@@ -646,6 +662,47 @@ function GSE.ButtonOverrideSequence(buttonName)
     -- No row for this state: the Default row, where the button has one.
     if GSE.ButtonOverrideDefaults and not GSE.ButtonOverrideDefaults[buttonName] then return nil end
     return GSE.ButtonOverrides and GSE.ButtonOverrides[buttonName]
+end
+
+--- Put a spec's Default rows on the stances they ran in before a stance bar
+--- became a bar of its own, once. Only for a class that is never out of a
+--- stance (alwaysStancePages): its Default rows ran on every stance with no
+--- row of its own, and would now never run at all. A row is marked
+--- StancesCopied when it has been looked at -- one made after this is marked
+--- as it is made (GSE.SetOverrideData) -- so a stance the player then unticks
+--- stays unticked. A button that is not there yet waits for a login that has
+--- it; a bar set on a stance's own slots (Dominos) never turns, and keeps its
+--- Default row as it is. Returns how many rows were added.
+function GSE.CopyDefaultRowsToStances(specKey)
+    local stances = alwaysStancePages()
+    local rows = stances and GSE.SpecOverrides(specKey, false)
+    if type(rows) ~= "table" then return 0 end
+    local defaults, has = {}, {}
+    for _, row in pairs(rows) do
+        if type(row) == "table" and type(row.Bind) == "string" then
+            if row.State ~= nil then
+                has[row.Bind .. "\001" .. tostring(row.State)] = true
+            elseif not row.StancesCopied then
+                defaults[#defaults + 1] = row
+            end
+        end
+    end
+    local added = 0
+    for _, row in ipairs(defaults) do
+        if type(_G[row.Bind]) == "table" then
+            local pages, home = GSE.ButtonStancePages(row.Bind)
+            if not (home and home >= 7 and home <= 10) then
+                for key in pairs(stances) do
+                    if pages[tonumber(key)] and not has[row.Bind .. "\001" .. key] then
+                        rows[row.Bind .. "-" .. key] = { Bind = row.Bind, State = key, Sequence = row.Sequence }
+                        added = added + 1
+                    end
+                end
+            end
+            row.StancesCopied = true
+        end
+    end
+    return added
 end
 
 --- Whether an overridden button runs sequence in any of its states.
@@ -708,6 +765,9 @@ function GSE.SetOverrideData(buttonName, sequenceId, layer, state, loadout)
     if state ~= nil then state = tostring(state) end
     local key = state and (buttonName .. "-" .. state) or buttonName
     local bind = { Bind = buttonName, State = state, Sequence = sequenceId }
+    -- A Default row made from now on is as the player ticked it: not one for
+    -- GSE.CopyDefaultRowsToStances to add stances to.
+    if state == nil and alwaysStancePages() then bind.StancesCopied = true end
     local function put(t)
         for _, k in ipairs(overrideKeysFor(t, buttonName, state)) do t[k] = nil end
         t[key] = bind

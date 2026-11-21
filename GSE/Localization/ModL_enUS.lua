@@ -743,6 +743,7 @@ L["Talent Loadout"] = true
 L["%s is bound more than once.  Change or remove one before saving."] = true
 L["All Talent Loadouts"] = true
 L["Changed for talent loadout %s only."] = true
+L["Each stance's bar now has its own sequences. Yours were put on every stance, where they ran before."] = true
 L["From talent loadout %s"] = true
 L["Loadout"] = true
 L["GSE Sequences"] = true

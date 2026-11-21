@@ -2482,6 +2482,30 @@ colorTable[0] = "|r"
 Statics.IndentationColorTable = colorTable
 
 do
+    -- A tick or untick in the menu's State picker is saved at once and put
+    -- on the buttons once the menu has closed. Put on at once, the button
+    -- blinks out as its rows are taken off and put back, and WoW closes a
+    -- menu whose button is gone (Larry, 2026-11-20). The menu's own closing
+    -- callbacks fire for a submenu too, so the open menu is asked for
+    -- instead; held through combat, when nothing can be put on a button.
+    local applyTicker
+    local function applyStateTicks()
+        if not applyTicker then return false end
+        applyTicker:Cancel()
+        applyTicker = nil
+        GSE.ReloadOverrides()
+        return true
+    end
+    local function applyWhenMenuCloses(owner)
+        if applyTicker then return end
+        applyTicker = C_Timer.NewTicker(0.1, function()
+            if InCombatLockdown() then return end
+            local open = Menu and Menu.GetManager and Menu.GetManager():GetOpenMenu()
+            if open and open.GetOwnerRegion and open:GetOwnerRegion() == owner then return end
+            applyStateTicks()
+        end)
+    end
+
     -- Shared handler: right-click on a GSE-overridden button shows change/clear options;
     -- right-click on an empty action button shows the sequence picker to assign one.
     local function gseEmptyButtonHandler(self, mousebutton, down)
@@ -2497,6 +2521,16 @@ do
         -- at once (WoW Forever). A bar that sends no release in OnClick still
         -- gets one through OnMouseUp (hookMenu).
         if down then return end
+        -- Ticks from a menu that has only just closed go on the buttons
+        -- first: this menu reads what is on them. Then it opens.
+        if applyStateTicks() then
+            self.gseABMenuOpenedAt = GetTime()
+            C_Timer.After(0.1, function()
+                self.gseABMenuOpenedAt = nil
+                gseEmptyButtonHandler(self, mousebutton)
+            end)
+            return
+        end
 
         local existingSequence = self:GetAttribute("gse-button")
         -- On a stance bar with no row of its own (the Default row stays off
@@ -2577,14 +2611,14 @@ do
         -- is in now. More than one state can be ticked (Larry, 2026-11-20: a
         -- warrior can choose all three stances); the sequence then goes on
         -- each, a row apiece. Never none: the last tick stays.
-        local toLoadout, toStates, nowState
+        local toLoadout, toStates
         if states then
             local now = GSE.OverrideStateFor and GSE.OverrideStateFor(self)
             local first = "Default"
             for _, k in ipairs(stateOrder) do
                 if now ~= nil and k == tostring(now) then first = k end
             end
-            toStates, nowState = { [first] = true }, first
+            toStates = { [first] = true }
             -- A button showing a sequence opens with every state that holds
             -- that sequence ticked, so the ticks say where it is, and a
             -- change goes to all of them.
@@ -2728,8 +2762,10 @@ do
                         select = function()
                             -- On a button showing a sequence the ticks are
                             -- where that sequence is, and changing one changes
-                            -- it at once (Larry, 2026-11-20): unticking takes
-                            -- the sequence off that state, ticking puts it on.
+                            -- it (Larry, 2026-11-20): unticking takes the
+                            -- sequence off that state, ticking puts it on.
+                            -- Saved at once; on the buttons when the menu has
+                            -- closed, so the menu stays open for the next tick.
                             if existingSequence then
                                 if InCombatLockdown() then return end
                                 local state = k ~= "Default" and k or nil
@@ -2740,15 +2776,13 @@ do
                                     local _, saved = GSE.OverrideLayerFor(buttonName, state)
                                     if tostring(saved) == tostring(state) then
                                         GSE.ClearOverrideData(buttonName, state)
-                                        GSE.ReloadOverrides()
+                                        applyWhenMenuCloses(self)
                                     end
-                                    -- Nothing left of it on the button as it
-                                    -- shows now: the menu is for another one.
-                                    if k == nowState or #pickedStates() == 0 then return MenuResponse.CloseAll end
                                 else
                                     toStates[k] = true
-                                    GSE.CreateActionBarOverride(buttonName, existingSequence,
-                                        toLoadout and "loadout" or "spec", k, toLoadout and toLoadout.id)
+                                    GSE.SetOverrideData(buttonName, existingSequence,
+                                        toLoadout and "loadout" or "spec", state, toLoadout and toLoadout.id)
+                                    applyWhenMenuCloses(self)
                                 end
                                 return
                             end

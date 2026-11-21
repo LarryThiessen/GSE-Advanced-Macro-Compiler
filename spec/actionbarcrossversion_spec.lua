@@ -244,6 +244,41 @@ describe("Stance bars on every client and bar addon", function()
           end
         end)
 
+        it(classfile .. ": no State for a form that brings up no bar", function()
+          local env = login(client, classfile)
+          local states, order = env.GSE.OverrideStatesFor(blizzardMainBar(env):GetName())
+          local turns = {}
+          for _, bonus in ipairs(bonuses) do turns[tostring(6 + bonus)] = true end
+          for _, k in ipairs(order or {}) do
+            if k ~= "Default" and states[k] ~= k then
+              assert.truthy(turns[k], states[k] .. " is a State on " .. client.name .. " but brings up no bar")
+            end
+          end
+        end)
+
+        it(classfile .. ": an upgrade puts Default rows on the stances of a class never out of one, and no other", function()
+          local env = login(client, classfile)
+          local b = blizzardMainBar(env)
+          local rows = { ActionButton1 = { Bind = "ActionButton1", Sequence = "SEQ" } }
+          env.GSE.SpecOverrides = function() return rows end
+          local always = (classfile == "WARRIOR" or classfile == "MONK") and #bonuses > 0
+          assert.are.equal(always and #bonuses or 0, env.GSE.CopyDefaultRowsToStances("spec"))
+          for _, bonus in ipairs(bonuses) do
+            local page = tostring(6 + bonus)
+            local row = rows["ActionButton1-" .. page]
+            if always then
+              assert.are.same({ Bind = "ActionButton1", State = page, Sequence = "SEQ" }, row)
+              -- And it runs there: the press and what GSE shows.
+              local shown, pressed = press(env, b, bonus, { default = true, pinned = { 6 + bonus } })
+              assert.are.equal("PINNED" .. page, shown)
+              assert.are.equal(shown, pressed)
+            else
+              assert.is_nil(row, classfile .. " is not always in a stance on " .. client.name)
+            end
+          end
+          assert.are.equal("SEQ", rows.ActionButton1.Sequence, "the Default row stays")
+        end)
+
         it(classfile .. ": a press and what GSE shows agree, on every bar, in every stance", function()
           -- What turns to a stance bar: the Default row stays off it there.
           local turning = { blizzardMainBar, dominosMainBar, daylightMainBar, driverPagedBar }
@@ -300,6 +335,75 @@ describe("Stance bars on every client and bar addon", function()
       end)
     end)
   end
+
+  -- The upgrade, for a class that is never out of a stance (a warrior on
+  -- Classic Era here): its Default rows ran in every stance with no row of its
+  -- own, and after the update would never run.
+  describe("Default rows on an upgrade", function()
+    local era = CLIENTS[1]
+    local function world(build)
+      local env = login(era, "WARRIOR")
+      local b = build and build(env)
+      local rows = {}
+      env.GSE.SpecOverrides = function() return rows end
+      return env, rows, b
+    end
+
+    it("leaves a stance's own row as it is, and fills the others", function()
+      local env, rows = world(blizzardMainBar)
+      rows.ActionButton1 = { Bind = "ActionButton1", Sequence = "SEQ" }
+      rows["ActionButton1-8"] = { Bind = "ActionButton1", State = "8", Sequence = "TANK" }
+      assert.are.equal(2, env.GSE.CopyDefaultRowsToStances("spec"))
+      assert.are.equal("TANK", rows["ActionButton1-8"].Sequence)
+      assert.are.equal("SEQ", rows["ActionButton1-7"].Sequence)
+      assert.are.equal("SEQ", rows["ActionButton1-9"].Sequence)
+    end)
+
+    it("is done once: a stance unticked afterwards stays unticked", function()
+      local env, rows = world(blizzardMainBar)
+      rows.ActionButton1 = { Bind = "ActionButton1", Sequence = "SEQ" }
+      assert.are.equal(3, env.GSE.CopyDefaultRowsToStances("spec"))
+      rows["ActionButton1-9"] = nil
+      assert.are.equal(0, env.GSE.CopyDefaultRowsToStances("spec"))
+      assert.is_nil(rows["ActionButton1-9"])
+    end)
+
+    it("waits for a button that is not there yet", function()
+      local env, rows = world()
+      rows.ActionButton1 = { Bind = "ActionButton1", Sequence = "SEQ" }
+      assert.are.equal(0, env.GSE.CopyDefaultRowsToStances("spec"))
+      assert.is_nil(rows.ActionButton1.StancesCopied, "not looked at: its bar addon is off this login")
+      blizzardMainBar(env)
+      assert.are.equal(3, env.GSE.CopyDefaultRowsToStances("spec"))
+    end)
+
+    it("adds nothing on a bar that turns to no stance bar", function()
+      for _, build in ipairs({ blizzardBar2, dominosBarOnBonusSlots }) do
+        local env, rows, b = world(build)
+        rows[b:GetName()] = { Bind = b:GetName(), Sequence = "SEQ" }
+        assert.are.equal(0, env.GSE.CopyDefaultRowsToStances("spec"), b:GetName())
+        assert.is_true(rows[b:GetName()].StancesCopied)
+      end
+      local env, rows = world()
+      newButton(env, "BT4Button1", { lab = { ["0"] = "action", ["7"] = "action" }, attrs = { state = "7" } })
+      rows.BT4Button1 = { Bind = "BT4Button1", Sequence = "SEQ" }
+      assert.are.equal(0, env.GSE.CopyDefaultRowsToStances("spec"), "a LibActionButton bar keeps its Default row")
+    end)
+
+    it("fills Dominos' first bar as it does Blizzard's", function()
+      local env, rows, b = world(dominosMainBar)
+      rows[b:GetName()] = { Bind = b:GetName(), Sequence = "SEQ" }
+      assert.are.equal(3, env.GSE.CopyDefaultRowsToStances("spec"))
+    end)
+
+    it("marks a Default row made after it as the player's own, and runs before the rows go on", function()
+      assert.truthy(profiles:find("if state == nil and alwaysStancePages() then bind.StancesCopied = true end", 1, true))
+      local load = between(events, "local function LoadOverrides(force)", "\nfunction GSE.ReloadOverrides(force)")
+      local copy = assert(load:find("GSE.CopyDefaultRowsToStances(GetSpec())", 1, true))
+      local apply = assert(load:find("GSE.OverridesToApply(GSE.SpecOverrides(GetSpec(), false), loadoutRows)", 1, true))
+      assert.is_true(copy < apply)
+    end)
+  end)
 
   it("a Dominos bar set on the bonus-bar slots keeps its Default row, and a row pinned there", function()
     local env = login(CLIENTS[5], "ROGUE")
