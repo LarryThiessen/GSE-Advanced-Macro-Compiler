@@ -4045,8 +4045,12 @@ function GSE.UpdateIcon(self, reseticon)
         end
         if GSE.ButtonOverrides and not reseticon then
             for k, v in pairs(GSE.ButtonOverrides) do
-                -- The sequence the button runs now: a LAB state can have its own.
-                local runs = GSE.ButtonOverrideSequence and GSE.ButtonOverrideSequence(k) or v
+                -- The sequence the button runs now: a state can have its own,
+                -- and in one with no row it runs none. Falling back to the
+                -- button's sequence there drew a stealth row's icon on the
+                -- main bar, and a Default row's on the stance bar.
+                local runs = v
+                if GSE.ButtonOverrideSequence then runs = GSE.ButtonOverrideSequence(k) end
                 if runs == gsebutton and _G[k] then
                     if
                         string.sub(k, 1, 5) == "ElvUI" or string.sub(k, 1, 4) == "CPB_" or string.sub(k, 1, 3) == "BT4" or

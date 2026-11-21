@@ -498,9 +498,18 @@ local function buildKeybindMenu()
         end
     end
 
-    -- Keybinding switched off (WoW Forever and Retail 12.1.7, or the GSE
-    -- Action Bar carries the keys): Button Bindings only.
-    if not GSE.KeybindingsEnabled() then table.remove(tree, 2) end
+    -- Button Bindings are set on the buttons themselves: their right-click
+    -- menu puts a sequence on a talent loadout and a stance, and opens the
+    -- button's key (GSE_Utils, Utils.lua). So the editor has no page for them
+    -- (Larry, 2026-11-20). What is left is the Keybindings pages, where GSE
+    -- still binds keys to sequences itself; where it does not (WoW Forever and
+    -- Retail 12.1.7, or the GSE Action Bar carries the keys) the editor has no
+    -- Bindings node at all, and this returns nil.
+    -- shortcut: the Button Bindings page's code below (showOverridePanel and
+    -- its helpers) stays, unreached, so Tim's changes to it still merge; take
+    -- it out if this goes to him.
+    table.remove(tree, 1)
+    if not GSE.KeybindingsEnabled() then return nil end
 
     -- Covers BOTH of its children: an override binds a sequence to a button,
     -- a keybind binds it to a key. Naming the parent "Keybindings" put a
@@ -1889,6 +1898,13 @@ local function clearOwnBarKeys(buttonName)
     for _, key in ipairs(keys) do SetBinding(key) end
     SaveBindings(GetCurrentBindingSet())
     return true
+end
+--- Open WoW's Key Bindings at a button's section, where its key is set. For
+--- the action buttons' right-click menu (GSE_Utils, Utils.lua), which reaches
+--- it through GSE.GUICall: this file loads on demand.
+function GSE.GUIOpenButtonKeyBindings(buttonName)
+    if GSE.isEmpty(buttonName) then return false end
+    return openWoWKeyBindingsFor(bindingActionFor(buttonName))
 end
 showOverridePanel = function(editframe, specialization, loadout, rightContainer)
     specialization = tostring(specialization or defaultSpecIndex())
