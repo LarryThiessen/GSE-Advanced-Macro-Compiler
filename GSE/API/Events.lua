@@ -1323,6 +1323,10 @@ function GSE.SequenceStepShown(sequenceId, spellID, name, pressed, macrotext)
     pcall(showCastPress, fired[1], fired[2], fired[3])
 end
 
+-- Puts DaylightUI's filled look on a button running a sequence; set once its
+-- skin is hooked (hookDaylightUIDress, below).
+local dressDaylightUIOverride
+
 local function repaintGSEOverrideButton(button, defer)
     if not button or not button.GetAttribute then return end
 
@@ -1332,6 +1336,7 @@ local function repaintGSEOverrideButton(button, defer)
         -- slot; re-asserted here because Dominos may re-evaluate grid state after
         -- our initial apply (hence the staggered repaint schedule).
         setOverrideButtonForcedShown(button, true)
+        if dressDaylightUIOverride then dressDaylightUIOverride(button) end
         local btnName = button:GetName()
         local icon = button.icon or (btnName and _G[btnName .. "Icon"])
         if not icon then return end
@@ -1740,6 +1745,46 @@ local function hookDaylightUIPaint()
     end)
 end
 
+-- DaylightUI dresses a button by what is in its action slot, and an
+-- override's slot is empty: the button's shell (its border), key and edge
+-- shading are hidden, or see-through with its empty buttons shown, so the
+-- sequence's icon sat bare beside the bar's other icons (Larry, 2026-11-21).
+-- The filled look goes back on wherever DaylightUI puts the empty one: after
+-- its skin's UpdateEmpty and UpdateRange, which its paints, a drag and its
+-- redraws all go through. The ends of its own fade (eg*) are set too, so a
+-- fade under way ends filled; taken off again, the button's next paint by
+-- DaylightUI is the empty look as ever.
+local function dressDaylightUIButton(skin, button)
+    if button:GetAttribute("type") ~= "click" or not overrideSequence(button) then return end
+    local parts = skin.GetParts(button)
+    if type(parts) ~= "table" then return end
+    local key = (type(parts.L) == "table" and parts.L.keybind == false) and 0 or 1
+    parts.egB, parts.egK, parts.egH = 1, key, 1
+    if not parts.emptyEasing then
+        parts.eB, parts.eK, parts.eH = 1, key, 1
+        if parts.back then parts.back:SetAlpha(1) end
+        if parts.key then parts.key:SetAlpha(key) end
+        local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
+        if highlight then highlight:SetAlpha(1) end
+    end
+    if parts.shade then parts.shade:SetAlpha(parts.tintA or 1) end
+end
+
+local function hookDaylightUIDress()
+    if dressDaylightUIOverride then return end
+    local DUI = _G.DaylightUI
+    local mod = type(DUI) == "table" and type(DUI.GetModule) == "function" and DUI:GetModule("ActionBars")
+    local skin = type(mod) == "table" and type(mod.ns) == "table" and mod.ns.Skin
+    if type(skin) ~= "table" or type(skin.GetParts) ~= "function" or type(skin.UpdateEmpty) ~= "function" then return end
+    dressDaylightUIOverride = function(button)
+        -- Every button's range and usable pass comes through here.
+        if type(button) ~= "table" or not button.GetAttribute or not button:GetAttribute("gse-button") then return end
+        pcall(dressDaylightUIButton, skin, button)
+    end
+    hooksecurefunc(skin, "UpdateEmpty", dressDaylightUIOverride)
+    if type(skin.UpdateRange) == "function" then hooksecurefunc(skin, "UpdateRange", dressDaylightUIOverride) end
+end
+
 -- EllesmereUI and DaylightUI route action-bar keybinds to native engine
 -- commands instead of clicking the visible button frame (DaylightUI's keys
 -- press the game's hidden buttons), so route those keys back through the
@@ -1841,6 +1886,7 @@ local function overrideActionButton(savedBind, force, pinnedStates)
     _G[Button]:SetAttribute("gse-button", Sequence)
     local isDaylightUIButton = daylightUIBar(Button) ~= nil
     if isDaylightUIButton then hookDaylightUIPaint() end
+    if isDaylightUIButton then hookDaylightUIDress() end
     if (string.sub(Button, 1, 9) == "EABButton" or isDaylightUIButton) and not InCombatLockdown() then
         if not routeButtonKeys(Button) then
             --@debug@
