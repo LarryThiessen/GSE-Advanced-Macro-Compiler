@@ -29,6 +29,24 @@ describe("action button right-click menu: Keybind", function()
     assert.truthy(page:sub(s, e):find("openWoWKeyBindingsFor(bindingActionFor(buttonName))", 1, true))
   end)
 
+  it("a cleared or moved sequence puts the States ticked for the next one back to Default", function()
+    local events = readSource("GSE/API/Events.lua")
+    local s = assert(events:find("local function forgetMenuStates()", 1, true))
+    local forget = events:sub(s, assert(events:find("\nend\n", s, true)))
+    assert.truthy(forget:find('if type(GSE_C) == "table" then GSE_C.ActionBarMenuStates = nil end', 1, true))
+    for _, name in ipairs({ "function GSE.RemoveActionBarOverride(buttonName)", "function GSE.MoveActionBarOverride(fromName, toName)" }) do
+      local from = assert(events:find(name, 1, true))
+      local body = events:sub(from, assert(events:find("\nend\n", from, true)))
+      local dropped = assert(body:find("forgetMenuStates()", 1, true), name .. " keeps the ticks")
+      assert.is_true(dropped < assert(body:find("GSE.ReloadOverrides()", 1, true)))
+    end
+    -- The menu's Clear Override goes through the first of them.
+    assert.truthy(menu:find('rootDescription:CreateButton(L["Clear Override"], function()\n                    GSE.RemoveActionBarOverride(buttonName)', 1, true))
+    -- With none remembered, an empty button opens on the state it is in alone.
+    assert.truthy(menu:find("toStates = { [first] = true }", 1, true))
+    assert.truthy(menu:find('if type(last) == "table" and last[k] then toStates[k] = true end', 1, true))
+  end)
+
   it("shows the row with and without sequences to list", function()
     local _, rows = menu:gsub("addKeybindRow%(rootDescription%)", "")
     assert.are.equal(2, rows, "after the pickers, and where the button has a sequence but none are left to pick")

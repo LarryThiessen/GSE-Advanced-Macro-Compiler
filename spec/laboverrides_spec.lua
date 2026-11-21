@@ -277,12 +277,14 @@ describe("Stance, form and stealth pages on other bars", function()
     local create = body(src, "function GSE.CreateActionBarOverride", "\nend\n")
     assert.truthy(create:find("GSE.OverrideStateFor(_G[buttonName])", 1, true))
     assert.truthy(create:find("GSE.SetOverrideData(buttonName, sequenceId, layer, state, loadout)", 1, true))
+    -- A move takes the button's every State with it (Larry, 2026-11-21).
     local move = body(src, "function GSE.MoveActionBarOverride", "\nend\n")
-    assert.truthy(move:find("GSE.OverrideStateFor(from)", 1, true))
-    assert.truthy(move:find("GSE.OverrideStateFor(to)", 1, true))
-    assert.truthy(move:find("GSE.ButtonOverrideSequence(fromName)", 1, true), "what shows there moves")
+    assert.truthy(move:find("GSE.MoveOverrideData(fromName, toName)", 1, true))
+    assert.truthy(move:find("if not GSE.ButtonOverrideSequence(fromName) then return end", 1, true),
+      "only a button showing a sequence now")
     local remove = body(src, "function GSE.RemoveActionBarOverride", "\nend\n")
-    assert.truthy(remove:find("GSE.ClearOverrideData(buttonName, GSE.OverrideStateFor(_G[buttonName]))", 1, true))
+    assert.truthy(remove:find("GSE.ClearOverrideData(buttonName, GSE.OverrideStateFor(_G[buttonName]), true)", 1, true),
+      "with every State the button is ticked for")
   end)
 end)
 

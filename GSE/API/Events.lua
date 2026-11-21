@@ -2646,41 +2646,38 @@ function GSE.CreateActionBarOverrides(buttonName, sequenceId, layer, states, loa
     return GSE.CreateActionBarOverride(buttonName, sequenceId, layer, states[#states], loadout)
 end
 
+-- The States the right-click menu ticks for the next sequence put on a button
+-- (this character's, GSE_Utils) go back to Default when a sequence is cleared
+-- or moved: the button it left opened with Default and Stealth still ticked,
+-- from the time the sequence was put on (Larry, 2026-11-21: "didnt clear the
+-- states to Default", "Move should clear state of old slot").
+local function forgetMenuStates()
+    if type(GSE_C) == "table" then GSE_C.ActionBarMenuStates = nil end
+end
+
 --- Clear the override the button shows now -- the active talent loadout's or
---- the spec's, for the state it is in -- and leave every other layer and
---- state as it was.
+--- the spec's -- with every State it is ticked for: Clear Override leaves
+--- none of the button's stance, form or stealth rows behind. The other layer
+--- is left as it was (a loadout's override cleared, the spec's shows again).
 function GSE.RemoveActionBarOverride(buttonName)
     if InCombatLockdown() then return end
-    GSE.ClearOverrideData(buttonName, GSE.OverrideStateFor(_G[buttonName]))
+    GSE.ClearOverrideData(buttonName, GSE.OverrideStateFor(_G[buttonName]), true)
+    forgetMenuStates()
     GSE.ReloadOverrides()
 end
 
---- Move the sequence fromName shows onto toName, as dragging it there does,
---- each button in the state it is in: what fromName shows there moves, and
---- lands on the state toName is in (on the stealth bar, it is on the stealth
---- bar). A sequence saved for exactly that state of toName comes back to the
---- row the moved one left, so the two swap; else that row is cleared. Each
---- change goes where its row lives (the active loadout's, or the spec's).
---- Returns "loadout" when either did.
+--- Move what fromName has onto toName, as dragging its sequence there does:
+--- the sequence with every State it is ticked for, each on the same State of
+--- toName. What toName had comes back to fromName the same way, so the two
+--- swap (GSE.MoveOverrideData). Only a button showing a sequence now is
+--- moved. Returns "loadout" when the active talent loadout's rows changed.
 function GSE.MoveActionBarOverride(fromName, toName)
     if InCombatLockdown() or fromName == toName then return end
-    local from, to = _G[fromName], _G[toName]
+    local from = _G[fromName]
     if not (from and from:GetAttribute("gse-button")) then return end
-    local fromSeq = GSE.ButtonOverrideSequence(fromName)
-    if not fromSeq then return end
-    local fromLayer, fromState = GSE.OverrideLayerFor(fromName, GSE.OverrideStateFor(from))
-    local toState = GSE.OverrideStateFor(to)
-    local toLayer, toRowState = GSE.OverrideLayerFor(toName, toState)
-    local toSeq = toLayer and to:GetAttribute("gse-button") and toRowState == toState
-        and GSE.ButtonOverrideSequence(toName)
-    local written = GSE.SetOverrideData(toName, fromSeq, toLayer == "loadout" and "loadout" or "spec", toState)
-    if toSeq then
-        if GSE.SetOverrideData(fromName, toSeq, fromLayer == "loadout" and "loadout" or "spec", fromState) == "loadout" then
-            written = "loadout"
-        end
-    else
-        GSE.ClearOverrideData(fromName, fromState)
-    end
+    if not GSE.ButtonOverrideSequence(fromName) then return end
+    local written = GSE.MoveOverrideData(fromName, toName)
+    forgetMenuStates()
     GSE.ReloadOverrides()
     return written
 end
