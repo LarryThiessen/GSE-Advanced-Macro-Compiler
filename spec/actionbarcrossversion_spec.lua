@@ -622,6 +622,145 @@ describe("Stance bars on every client and bar addon", function()
     end)
   end)
 
+  -- A sequence stays on the bars through a change of bar addon (Larry,
+  -- 2026-11-21: "swapping UI Addons removes GSE Sequences from the ActionBars
+  -- > the Sequence and Binds should stay"). A row is saved under a button's
+  -- name, which is the bar addon's own; the action slot the button holds is
+  -- the same in all of them.
+  describe("A change of bar addon", function()
+    local forever = CLIENTS[4]
+    -- The bars as a bar addon leaves them: Blizzard's buttons are always
+    -- there (hidden under a bar addon), with the bar addon's own beside them.
+    local function bars(...)
+      local env = login(forever, "ROGUE")
+      for _, name in ipairs({ "ActionButton1", "ActionButton2", "MultiBarBottomLeftButton3", ... }) do
+        newButton(env, name, { attrs = {} })
+      end
+      return env
+    end
+    local function binds(rows)
+      local out = {}
+      for key, row in pairs(rows) do
+        assert.are.equal(key, row.Bind .. (row.State and ("-" .. row.State) or ""), "a row is filed under its button and State")
+        out[#out + 1] = key .. "=" .. row.Sequence
+      end
+      table.sort(out)
+      return out
+    end
+
+    it("knows each bar addon's button by the slot it holds", function()
+      local GSE = bars().GSE
+      local same = {
+        [1] = { Blizzard = "ActionButton1", EllesmereUI = "EABButton1", DaylightUI = "DaylightUIBar1Button1",
+          ElvUI = "ElvUI_Bar1Button1", Bartender4 = "BT4Button1", NDui = "NDui_ActionBar1Button1" },
+        -- Blizzard's Action Bar 2 is page 6: ElvUI's and Bartender4's bar 6.
+        [63] = { Blizzard = "MultiBarBottomLeftButton3", EllesmereUI = "EABButton63", DaylightUI = "DaylightUIBar2Button3",
+          ElvUI = "ElvUI_Bar6Button3", Bartender4 = "BT4Button63", NDui = "NDui_ActionBar2Button3" },
+        -- Action Bar 8 is page 15.
+        [180] = { Blizzard = "MultiBar7Button12", EllesmereUI = "EABButton180", DaylightUI = "DaylightUIBar8Button12",
+          ElvUI = "ElvUI_Bar15Button12", Bartender4 = "BT4Button180", NDui = "NDui_ActionBar8Button12" },
+      }
+      for slot, names in pairs(same) do
+        for family, name in pairs(names) do
+          local f, s = GSE.ButtonHomeSlot(name)
+          assert.are.equal(family, f, name)
+          assert.are.equal(slot, s, name)
+        end
+      end
+      for _, other in ipairs({ "GSEButton1", "CPB_PAD1", "ButtonForge12", "DaylightUIBar9Button1", "ActionButton13",
+        "MultiBarBottomLeftButton0", "ElvUI_Bar1Button13", "PetActionButton1" }) do
+        assert.is_nil(GSE.ButtonHomeSlot(other), other)
+      end
+    end)
+
+    it("moves a sequence and its stance rows to the bar addon now running, and back", function()
+      -- As saved on Larry's rogue under EllesmereUI; ElvUI is running.
+      local rows = {
+        EABButton1 = { Bind = "EABButton1", Sequence = "SEQ" },
+        ["EABButton1-7"] = { Bind = "EABButton1", State = "7", Sequence = "SEQ" },
+        GSEButton1 = { Bind = "GSEButton1", Sequence = "OWN" },
+      }
+      local env = bars("ElvUI_Bar1Button1")
+      assert.are.equal(2, env.GSE.MoveRowsToActiveBars(rows))
+      assert.are.same({ "ElvUI_Bar1Button1-7=SEQ", "ElvUI_Bar1Button1=SEQ", "GSEButton1=OWN" }, binds(rows))
+      assert.are.equal(0, env.GSE.MoveRowsToActiveBars(rows), "nothing left to move")
+      -- DaylightUI the next day, EllesmereUI again after it, then no bar addon.
+      assert.are.equal(2, bars("DaylightUIBar1Button1").GSE.MoveRowsToActiveBars(rows))
+      assert.are.same({ "DaylightUIBar1Button1-7=SEQ", "DaylightUIBar1Button1=SEQ", "GSEButton1=OWN" }, binds(rows))
+      assert.are.equal(2, bars("EABButton1").GSE.MoveRowsToActiveBars(rows))
+      assert.are.same({ "EABButton1-7=SEQ", "EABButton1=SEQ", "GSEButton1=OWN" }, binds(rows))
+      assert.are.equal(2, bars().GSE.MoveRowsToActiveBars(rows))
+      assert.are.same({ "ActionButton1-7=SEQ", "ActionButton1=SEQ", "GSEButton1=OWN" }, binds(rows))
+    end)
+
+    it("keeps a row's every field: it is the same row", function()
+      local row = { Bind = "ActionButton2", State = "7", Sequence = "SEQ", StancesCopied = true }
+      local rows = { ["ActionButton2-7"] = row }
+      bars("BT4Button1", "BT4Button2").GSE.MoveRowsToActiveBars(rows)
+      assert.are.equal(row, rows["BT4Button2-7"])
+      assert.are.same({ Bind = "BT4Button2", State = "7", Sequence = "SEQ", StancesCopied = true }, row)
+    end)
+
+    it("moves a bar 2 row to the bar on the same slots", function()
+      for _, name in ipairs({ "EABButton63", "DaylightUIBar2Button3", "ElvUI_Bar6Button3", "BT4Button63", "NDui_ActionBar2Button3" }) do
+        local rows = { [name] = { Bind = name, Sequence = "SEQ" } }
+        assert.are.equal(1, bars().GSE.MoveRowsToActiveBars(rows), name)
+        assert.are.same({ "MultiBarBottomLeftButton3=SEQ" }, binds(rows), name)
+      end
+    end)
+
+    it("leaves a row whose slot has no button here, for the day its bar addon is back", function()
+      -- ElvUI's bar 2 is page 2, which no Blizzard bar shows.
+      local rows = { ElvUI_Bar2Button1 = { Bind = "ElvUI_Bar2Button1", Sequence = "SEQ" } }
+      assert.are.equal(0, bars().GSE.MoveRowsToActiveBars(rows))
+      assert.are.same({ "ElvUI_Bar2Button1=SEQ" }, binds(rows))
+      -- EllesmereUI has not built this bar's buttons (the bar is hidden).
+      rows = { MultiBarBottomLeftButton3 = { Bind = "MultiBarBottomLeftButton3", Sequence = "SEQ" } }
+      assert.are.equal(0, bars("EABButton1").GSE.MoveRowsToActiveBars(rows))
+      assert.are.same({ "MultiBarBottomLeftButton3=SEQ" }, binds(rows))
+    end)
+
+    it("never writes over a row the button here already has", function()
+      local rows = {
+        EABButton1 = { Bind = "EABButton1", Sequence = "OLD" },
+        ElvUI_Bar1Button1 = { Bind = "ElvUI_Bar1Button1", Sequence = "MINE" },
+        ["EABButton1-7"] = { Bind = "EABButton1", State = "7", Sequence = "STEALTH" },
+      }
+      assert.are.equal(1, bars("ElvUI_Bar1Button1").GSE.MoveRowsToActiveBars(rows))
+      assert.are.same({ "EABButton1=OLD", "ElvUI_Bar1Button1-7=STEALTH", "ElvUI_Bar1Button1=MINE" }, binds(rows))
+    end)
+
+    it("leaves the rows alone where the bar addon is the one they were saved under", function()
+      local rows = { ElvUI_Bar1Button1 = { Bind = "ElvUI_Bar1Button1", Sequence = "SEQ" } }
+      assert.are.equal(0, bars("ElvUI_Bar1Button1").GSE.MoveRowsToActiveBars(rows))
+      -- Dominos keeps Blizzard's names: nothing to move with it, or without.
+      rows = { ActionButton1 = { Bind = "ActionButton1", Sequence = "SEQ" } }
+      assert.are.equal(0, bars("DominosActionButton13").GSE.MoveRowsToActiveBars(rows))
+      assert.are.equal(0, bars().GSE.MoveRowsToActiveBars(nil), "no rows at all")
+    end)
+
+    it("is done as the overrides are loaded, for the spec's rows and the loadout's, before they go on", function()
+      local load = between(events, "local function LoadOverrides(force)", "\nfunction GSE.ReloadOverrides(force)")
+      local spec = assert(load:find("GSE.MoveRowsToActiveBars(GSE.SpecOverrides(GetSpec(), false))", 1, true))
+      local loadout = assert(load:find("GSE.MoveRowsToActiveBars(loadoutRows)", 1, true))
+      local copy = assert(load:find("GSE.CopyDefaultRowsToStances(GetSpec())", 1, true))
+      local apply = assert(load:find("GSE.OverridesToApply(GSE.SpecOverrides(GetSpec(), false), loadoutRows)", 1, true))
+      assert.is_true(spec < copy and loadout < copy and copy < apply)
+    end)
+
+    it("an ElvUI bar's own state is its own page, so a sequence put on it is the bar's Default", function()
+      local env = bars()
+      assert.are.equal("1", env.GSE.LABDefaultState("ElvUI_Bar1Button1"))
+      assert.are.equal("3", env.GSE.LABDefaultState("ElvUI_Bar3Button12"))
+      assert.are.equal("13", env.GSE.LABDefaultState("ElvUI_Bar13Button1"))
+      assert.are.equal("0", env.GSE.LABDefaultState("BT4Button25"))
+      local lab = {}
+      for k = 1, 18 do lab[tostring(k)] = "action" end
+      local b = newButton(env, "ElvUI_Bar3Button1", { parent = {}, attrs = { state = "3" }, lab = lab })
+      assert.is_nil(env.GSE.OverrideStateFor(b))
+    end)
+  end)
+
   -- The upgrade, for a class that is never out of a stance (a warrior on
   -- Classic Era here): its Default rows ran in every stance with no row of its
   -- own, and after the update would never run.

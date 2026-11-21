@@ -314,11 +314,14 @@ end
 --- The state a LibActionButton bar's button is in with no stance, form or
 --- stealth: the one a Default row (no State) is saved for. Bartender4 counts
 --- its states from 0, ConsolePort has none, NDui pages from 2, the rest from 1.
+--- An ElvUI bar's is its own page, the bar's number: bar 3 sits in state 3, so
+--- with "1" a sequence put on it was saved for a State of its own that no
+--- list named, and not as the bar's Default.
 function GSE.LABDefaultState(buttonName)
     if string.sub(buttonName, 1, 3) == "BT4" then return "0" end
     if string.sub(buttonName, 1, 4) == "CPB_" then return "" end
     if string.sub(buttonName, 1, 5) == "NDui_" then return "2" end
-    return "1"
+    return string.match(buttonName, "^ElvUI_Bar(%d+)Button%d+$") or "1"
 end
 
 -- ── What a bar's pages are for ──────────────────────────────────────────────
@@ -722,6 +725,132 @@ function GSE.ButtonOverrideSequence(buttonName)
     -- No row for this state: the Default row, where the button has one.
     if GSE.ButtonOverrideDefaults and not GSE.ButtonOverrideDefaults[buttonName] then return nil end
     return GSE.ButtonOverrides and GSE.ButtonOverrides[buttonName]
+end
+
+-- ── A button by the action slot it is on ────────────────────────────────────
+--
+-- Each bar addon names its buttons its own way, and a row is saved under the
+-- button's name: a sequence put on EllesmereUI's first button was gone from
+-- the bars the day the player ran ElvUI, or DaylightUI, or no bar addon at
+-- all (Larry, 2026-11-21: "the Sequence and Binds should stay"). What every
+-- one of them agrees on is the action slot a button holds on its own page
+-- (Blizzard's bars 1-8 are pages 1, 6, 5, 3, 4, 13, 14 and 15), and the
+-- game's own key bindings go by the same bars. So a row saved for another bar
+-- addon's button is moved to the button on that slot in the one running now.
+
+local BAR_PAGES = { 1, 6, 5, 3, 4, 13, 14, 15 }
+local BAR_OF_PAGE = {}
+for bar, page in ipairs(BAR_PAGES) do BAR_OF_PAGE[page] = bar end
+local BLIZZARD_BARS = {
+    "ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton", "MultiBarRightButton",
+    "MultiBarLeftButton", "MultiBar5Button", "MultiBar6Button", "MultiBar7Button",
+}
+
+-- A bar addon whose buttons are named by bar and button. byBarOrder: its bars
+-- 1-8 are Blizzard's, in Blizzard's order; otherwise bar n is page n.
+local function barFamily(name, pattern, format, byBarOrder)
+    return {
+        name = name,
+        slot = function(button)
+            local bar, index = string.match(button, pattern)
+            bar, index = tonumber(bar), tonumber(index)
+            local page = bar
+            if byBarOrder then page = bar and BAR_PAGES[bar] end
+            if not page or not index or index < 1 or index > 12 then return nil end
+            return (page - 1) * 12 + index
+        end,
+        button = function(slot)
+            local page, index = math.floor((slot - 1) / 12) + 1, (slot - 1) % 12 + 1
+            local bar = page
+            if byBarOrder then bar = BAR_OF_PAGE[page] end
+            return bar and string.format(format, bar, index) or nil
+        end,
+    }
+end
+-- A bar addon whose buttons are named by the slot itself.
+local function slotFamily(name, prefix)
+    return {
+        name = name,
+        slot = function(button) return tonumber(string.match(button, "^" .. prefix .. "(%d+)$")) end,
+        button = function(slot) return prefix .. slot end,
+    }
+end
+-- The bar addons that take the bars over, then Blizzard's own (Dominos keeps
+-- Blizzard's names for these slots). ConsolePort's buttons go by the pad's
+-- keys, Button Forge's and the GSE Action Bar's by nothing shared: their rows
+-- stay where they are.
+local BAR_FAMILIES = {
+    slotFamily("EllesmereUI", "EABButton"),
+    barFamily("DaylightUI", "^DaylightUIBar(%d+)Button(%d+)$", "DaylightUIBar%dButton%d", true),
+    barFamily("ElvUI", "^ElvUI_Bar(%d+)Button(%d+)$", "ElvUI_Bar%dButton%d"),
+    slotFamily("Bartender4", "BT4Button"),
+    barFamily("NDui", "^NDui_ActionBar(%d+)Button(%d+)$", "NDui_ActionBar%dButton%d", true),
+    {
+        name = "Blizzard",
+        slot = function(button)
+            for bar, prefix in ipairs(BLIZZARD_BARS) do
+                local index = tonumber(string.match(button, "^" .. prefix .. "(%d+)$"))
+                if index and index >= 1 and index <= 12 then return (BAR_PAGES[bar] - 1) * 12 + index end
+            end
+        end,
+        button = function(slot)
+            local bar = BAR_OF_PAGE[math.floor((slot - 1) / 12) + 1]
+            return bar and BLIZZARD_BARS[bar] .. ((slot - 1) % 12 + 1) or nil
+        end,
+    },
+}
+
+--- The bar addon a button name is of ("EllesmereUI", "ElvUI", "Blizzard"...)
+--- and the action slot it holds on its own page, or nil for any other button.
+function GSE.ButtonHomeSlot(buttonName)
+    if type(buttonName) ~= "string" then return nil end
+    for _, family in ipairs(BAR_FAMILIES) do
+        local slot = family.slot(buttonName)
+        if slot and slot >= 1 and slot <= 180 then return family.name, slot end
+    end
+end
+
+-- The bar addon running the bars now: the first that has made a bar's first
+-- button, else Blizzard's (and Dominos, on Blizzard's names).
+local function activeBarFamily()
+    for _, family in ipairs(BAR_FAMILIES) do
+        for _, page in ipairs(BAR_PAGES) do
+            local name = family.button((page - 1) * 12 + 1)
+            if family.name == "Blizzard" or (name and type(_G[name]) == "table") then return family end
+        end
+    end
+end
+
+--- Move the rows saved for another bar addon's buttons to the buttons on the
+--- same slots in the one running now: rows, a spec's or a loadout's. A row
+--- keeps its State and everything else. One whose slot has no button here, or
+--- whose button here already has a row for that State, is left as it is, for
+--- the day its own bar addon is back. Returns how many were moved.
+function GSE.MoveRowsToActiveBars(rows)
+    if type(rows) ~= "table" then return 0 end
+    local active = activeBarFamily()
+    local moves = {}
+    for key, row in pairs(rows) do
+        if type(row) == "table" and type(row.Bind) == "string" then
+            local family, slot = GSE.ButtonHomeSlot(row.Bind)
+            local target = family and family ~= active.name and active.button(slot)
+            if target and type(_G[target]) == "table" then
+                moves[#moves + 1] = { key = key, row = row, target = target }
+            end
+        end
+    end
+    local moved = 0
+    for _, move in ipairs(moves) do
+        local state = move.row.State
+        local key = move.target .. (state ~= nil and ("-" .. tostring(state)) or "")
+        if rows[key] == nil then
+            rows[move.key] = nil
+            move.row.Bind = move.target
+            rows[key] = move.row
+            moved = moved + 1
+        end
+    end
+    return moved
 end
 
 --- Put a spec's Default rows on the stances they ran in before a stance bar

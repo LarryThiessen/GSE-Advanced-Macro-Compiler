@@ -2430,6 +2430,12 @@ local function LoadOverrides(force)
                 loadoutRows = GSE_C["ActionBarBinds"]["LoadOuts"][GetSpec()][selected]
             end
         end
+        -- Rows saved under another bar addon's buttons, onto this one's
+        -- (GSE.MoveRowsToActiveBars, Profiles.lua): the bar addon changed.
+        if GSE.MoveRowsToActiveBars then
+            GSE.MoveRowsToActiveBars(GSE.SpecOverrides(GetSpec(), false))
+            GSE.MoveRowsToActiveBars(loadoutRows)
+        end
         -- Once: a warrior's or monk's Default rows onto the stances they ran
         -- in before (GSE.CopyDefaultRowsToStances, Profiles.lua).
         local copied = GSE.CopyDefaultRowsToStances and GSE.CopyDefaultRowsToStances(GetSpec()) or 0
