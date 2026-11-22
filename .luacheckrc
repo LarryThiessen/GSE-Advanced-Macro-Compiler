@@ -51,6 +51,7 @@ globals = {
     "GetBindingKey",
     "GetBinding",
     "GetNumBindings",
+    "GetPhysicalScreenSize",
     "KeybindListener",
     "KeybindFrames_InQuickKeybindMode",
     "QuickKeybindFrame",
