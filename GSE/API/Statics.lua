@@ -163,17 +163,13 @@ GSE.SpecIDClassList = {
     [1473] = 13
 }
 
--- A spec's name as the client gives it, or nil where it has no such spec (a
--- Retail-only spec on Mists, any retail spec on WoW Forever). Mists was given
--- the spec's class id here in place of a name: a number, which the editor's
--- spec list cannot sort, so a sequence's Configuration page stopped before
--- its rows (Larry, 2026-11-23). The clients without specs never ask
--- (buildSpecList).
 local function determineSpecializationName(specID)
-    if not GetSpecializationInfoByID then return nil end
-    local _, specname = GetSpecializationInfoByID(specID)
-    if type(specname) ~= "string" or specname == "" then return nil end
-    return specname
+    if GSE.GameMode < 7 then
+        return GSE.SpecIDClassList[specID]
+    else
+        local _, specname = GetSpecializationInfoByID(specID)
+        return specname
+    end
 end
 
 local function determineClassName(specID)
@@ -313,7 +309,12 @@ local function buildSpecList()
     if specListBuilt then return end
     specListBuilt = true
 
-    if GSE.GameMode <= 4 then
+    -- Mists of Pandaria is on the class-only list too (#2236). The list
+    -- under it names a spec through determineSpecializationName, which gives a
+    -- class id, a number, below Legion; the editor's Specialization dropdown
+    -- sorts by name and stopped on it, so a sequence's Configuration page
+    -- ended after Author.
+    if GSE.GameMode <= 5 then
         Statics.SpecIDClassList = {
             [0] = 0,
             [1] = 1,
@@ -340,6 +341,9 @@ local function buildSpecList()
         Statics.SpecIDList[11] = determineClassName(11)
         if GSE.GameMode >= 3 then
             Statics.SpecIDList[6] = determineClassName(6)
+        end
+        if GSE.GameMode >= 5 then
+            Statics.SpecIDList[10] = determineClassName(10)
         end
     else
         Statics.SpecIDList[0]    = L["Global"]
