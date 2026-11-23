@@ -309,12 +309,7 @@ local function buildSpecList()
     if specListBuilt then return end
     specListBuilt = true
 
-    -- Mists of Pandaria is on the class-only list too (#2236). The list
-    -- under it names a spec through determineSpecializationName, which gives a
-    -- class id, a number, below Legion; the editor's Specialization dropdown
-    -- sorts by name and stopped on it, so a sequence's Configuration page
-    -- ended after Author.
-    if GSE.GameMode <= 5 then
+    if GSE.GameMode < 7 and not GSE.IsForever then
         Statics.SpecIDClassList = {
             [0] = 0,
             [1] = 1,
@@ -343,6 +338,7 @@ local function buildSpecList()
             Statics.SpecIDList[6] = determineClassName(6)
         end
         if GSE.GameMode >= 5 then
+            Statics.SpecIDClassList[10] = 10
             Statics.SpecIDList[10] = determineClassName(10)
         end
     else
