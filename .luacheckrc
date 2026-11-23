@@ -381,6 +381,7 @@ globals = {
     "IsSpellKnownOrOverridesKnown",
     "RegisterStateDriver",
     "UnregisterStateDriver",
+    "GetNumShapeshiftForms",
     "GetShapeshiftFormInfo",
     "GetSpecializationInfoByID",
     "GetSpecializationRole",
