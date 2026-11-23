@@ -317,4 +317,23 @@ describe("A sequence's press shown as a button press", function()
     assert.are.equal(1, ActionButton2.shown)
     assert.are.equal(0, ActionButton1.shown)
   end)
+
+  -- The switch is GSE Streamer Mode in GSE's options (Larry, 2026-11-23), off
+  -- unless ticked, on the setting it always had.
+  it("is switched by GSE Streamer Mode in GSE's options, off by default", function()
+    local function read(path)
+      local fh = assert(io.open(path, "r"))
+      local text = fh:read("*a"):gsub("\r\n", "\n")
+      fh:close()
+      return text
+    end
+    local options = read("GSE_Options/Options.lua")
+    assert.truthy(options:find('Settings.RegisterProxySetting(optionsCategory, "actionBarShowCastPress", '
+      .. 'Settings.VarType.Boolean, L["GSE Streamer Mode"], false, GetValue, SetValue)', 1, true))
+    assert.truthy(options:find("return GSEOptions.actionBarShowCastPress == true", 1, true))
+    assert.truthy(options:find("AddActionBarCastPressOption(generalOptions)", 1, true))
+    local enUS = read("GSE/Localization/ModL_enUS.lua")
+    assert.truthy(enUS:find('\nL["GSE Streamer Mode"] = true\n', 1, true))
+    assert.is_nil(enUS:find("Show Sequence Presses on Action Buttons", 1, true))
+  end)
 end)

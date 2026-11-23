@@ -1613,8 +1613,10 @@ local function AddActionBarIconColourOption(optionsCategory)
     end
 end
 
--- Off by default: a press of a sequence shows on the action buttons holding
--- the spell it fired. See showCastPress in GSE/API/Events.lua.
+-- GSE Streamer Mode (Larry, 2026-11-23: the name, for viewers to see what a
+-- sequence presses). Off by default: a press of a sequence shows on the
+-- action buttons holding the spell it fired. See showCastPress in
+-- GSE/API/Events.lua. The saved setting keeps its name, actionBarShowCastPress.
 local function AddActionBarCastPressOption(optionsCategory)
     do
         local function GetValue()
@@ -1623,7 +1625,7 @@ local function AddActionBarCastPressOption(optionsCategory)
         local function SetValue(val)
             GSEOptions.actionBarShowCastPress = val == true
         end
-        local setting = Settings.RegisterProxySetting(optionsCategory, "actionBarShowCastPress", Settings.VarType.Boolean, L["Show Sequence Presses on Action Buttons"], false, GetValue, SetValue)
+        local setting = Settings.RegisterProxySetting(optionsCategory, "actionBarShowCastPress", Settings.VarType.Boolean, L["GSE Streamer Mode"], false, GetValue, SetValue)
         Settings.CreateCheckbox(optionsCategory, setting, L["Each press of a sequence shows as a press of the action bar button holding the spell it fired, as if you had pressed that spell's own key. Visual only."])
     end
 end
