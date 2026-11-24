@@ -2549,7 +2549,10 @@ showOverridePanel = function(editframe, specialization, loadout, rightContainer)
     end
     local headerText = iconText(GSE.GetClassIcon(classid), classColour .. (classname or "") .. Statics.StringReset, 22)
     if specname then
-        headerText = headerText .. "  -  " .. iconText(specicon, classColour .. specname .. Statics.StringReset, 22)
+        -- The spec's icon after its name, as the class's is before its own:
+        -- the line reads between its two icons (Larry, 2026-11-24).
+        headerText = headerText .. "  -  " .. classColour .. specname .. Statics.StringReset
+            .. (specicon and (" |T" .. specicon .. ":22:22|t") or "")
     end
     -- Sized to its text, so the centred row centres it: a label as wide as
     -- every column together is wider than the pane, and the layout then
