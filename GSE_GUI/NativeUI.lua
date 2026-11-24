@@ -4969,6 +4969,24 @@ local function createTreeButton(widget)
             if self.disabled then return end
             if mouseButton == "LeftButton" and self.hasChildren then
                 local status = widget.status or widget.localstatus
+                -- A tree can have a click on a row go to the row's page every
+                -- time, open or not, selected or not, and leave opening and
+                -- closing to the row's +/- box (widget.rowClickSelects, asked
+                -- with the row's value). Without it an open row's click only
+                -- closed it, and one already selected never drew its page
+                -- again (Larry, 2026-11-24, the Editor's Bindings rows).
+                if widget.rowClickSelects and widget.rowClickSelects(self.uniquevalue)
+                    and not (self.toggle.IsMouseOver and self.toggle:IsMouseOver(4, -4, -4, 4)) then
+                    if not status.groups[self.uniquevalue] then
+                        status.groups[self.uniquevalue] = true
+                        widget:Fire("OnGroupExpanded", self.uniquevalue, true)
+                    end
+                    status.selected = self.uniquevalue
+                    widget:RefreshTree()
+                    widget:Fire("OnGroupSelected", self.uniquevalue)
+                    UI:ClearFocus()
+                    return
+                end
                 if status.groups[self.uniquevalue] then
                     status.groups[self.uniquevalue] = nil
                     widget:Fire("OnGroupExpanded", self.uniquevalue, false)
